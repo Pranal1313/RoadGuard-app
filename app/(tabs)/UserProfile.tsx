@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   StatusBar,
   Platform,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import {
   ChevronLeft,
@@ -16,17 +17,74 @@ import {
   Edit,
   LogOut,
 } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
+import { auth, db } from '../../firebaseConfig';
 import RecentReports from '../components/RecentReports';
 
 export default function UserProfile() {
+  const router = useRouter();
+
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [credits, setCredits] = useState(0);
+
+  /* ---------- LOAD USER DATA ---------- */
+  useEffect(() => {
+    const loadUserData = async () => {
+      const user = auth.currentUser;
+
+      if (!user) {
+        router.replace('/login');
+        return;
+      }
+
+      setEmail(user.email || '');
+
+      try {
+        const docRef = doc(db, 'users', user.uid);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setFullName(data.fullName || 'User');
+          setCredits(data.credits || 1250);
+        }
+      } catch (error) {
+        Alert.alert('Error', 'Failed to load profile data');
+      }
+    };
+
+    loadUserData();
+  }, []);
+
+  /* ---------- LOGOUT ---------- */
+  const handleLogout = async () => {
+    await signOut(auth);
+    router.replace('/login');
+  };
+
+  /* ---------- INITIALS ---------- */
+  const initials = fullName
+    ? fullName
+        .split(' ')
+        .map(word => word[0])
+        .join('')
+        .toUpperCase()
+    : 'U';
+
   return (
     <View style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
-            <ChevronLeft color="white" size={24} />
+            <TouchableOpacity onPress={() => router.back()}>
+              <ChevronLeft color="white" size={24} />
+            </TouchableOpacity>
+
             <Text style={styles.headerTitle}>Profile</Text>
             <Settings color="white" size={22} />
           </View>
@@ -36,12 +94,12 @@ export default function UserProfile() {
             {/* User Info */}
             <View style={styles.profileRow}>
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>JD</Text>
+                <Text style={styles.avatarText}>{initials}</Text>
               </View>
 
               <View>
-                <Text style={styles.name}>John Doe</Text>
-                <Text style={styles.email}>john.doe@example.com</Text>
+                <Text style={styles.name}>{fullName}</Text>
+                <Text style={styles.email}>{email}</Text>
               </View>
             </View>
 
@@ -52,18 +110,16 @@ export default function UserProfile() {
                   Total Credits Earned
                 </Text>
 
-                {/* Award icon */}
                 <View style={styles.awardIcon}>
                   <Award size={18} color="white" />
                 </View>
               </View>
 
               <View style={styles.creditsRow}>
-                <Text style={styles.creditsValue}>1250</Text>
+                <Text style={styles.creditsValue}>{credits}</Text>
                 <Text style={styles.points}>points</Text>
               </View>
 
-              {/* Redeem button */}
               <TouchableOpacity style={styles.redeemBtn}>
                 <CreditCard size={18} color="white" />
                 <Text style={styles.redeemText}>Redeem Credits</Text>
@@ -92,10 +148,10 @@ export default function UserProfile() {
             icon={<LogOut size={20} color="#DC2626" />}
             label="Logout"
             danger
+            onPress={handleLogout}
           />
         </View>
 
-        {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>RoadGuard v1.0.0</Text>
         </View>
@@ -104,19 +160,20 @@ export default function UserProfile() {
   );
 }
 
-/* ---------------- Action Item ---------------- */
-
+/* ---------- Action Item ---------- */
 function ActionItem({
   icon,
   label,
   danger,
+  onPress,
 }: {
   icon: React.ReactNode;
   label: string;
   danger?: boolean;
+  onPress?: () => void;
 }) {
   return (
-    <TouchableOpacity style={styles.actionItem}>
+    <TouchableOpacity style={styles.actionItem} onPress={onPress}>
       {icon}
       <Text
         style={[
@@ -130,21 +187,19 @@ function ActionItem({
   );
 }
 
-/* ---------------- Styles ---------------- */
-
+/* ---------- Styles (UNCHANGED) ---------- */
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F5F7FB',
-  },
+  safe: { flex: 1, backgroundColor: '#F5F7FB' },
 
   header: {
     backgroundColor: '#042262',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 24,
-    paddingBottom: 70,
+    paddingBottom: 60,
     paddingHorizontal: 20,
     borderBottomLeftRadius: 26,
     borderBottomRightRadius: 26,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
   },
 
   headerRow: {
@@ -201,7 +256,7 @@ const styles = StyleSheet.create({
 
   creditsBox: {
     marginTop: 18,
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#fff6ce',
     borderRadius: 16,
     padding: 16,
   },

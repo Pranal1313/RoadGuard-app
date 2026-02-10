@@ -1,26 +1,47 @@
-import React from 'react';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { auth, db } from '../../firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { View, ActivityIndicator } from 'react-native';
 
-export default function TabsLayout({ route }: any) {
-  const role = route?.params?.role || 'user'; // default to user
+export default function AdminTabsLayout() {
+  const router = useRouter();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        router.replace('/login');
+        return;
+      }
+
+      const ref = doc(db, 'users', user.uid);
+      const snap = await getDoc(ref);
+
+      if (!snap.exists() || snap.data().role !== 'admin') {
+        router.replace('/login');
+        return;
+      }
+
+      setChecking(false); // ✅ admin verified
+    });
+
+    return unsub;
+  }, []);
+
+  if (checking) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: true,
-      }}
-    >
-      {/* User Screens */}
-      <Tabs.Screen name="HomeScreen" options={{ title: 'Home' }} />
-      <Tabs.Screen name="ReportScreen" options={{ title: 'Report' }} />
-
-      {/* Admin screen only for admin */}
-      {role === 'admin' && (
-        <Tabs.Screen
-          name="AdminScreen"
-          options={{ title: 'Admin' }}
-        />
-      )}
+    <Tabs screenOptions={{ headerShown: true }}>
+      <Tabs.Screen name="HomeScreen" options={{ title: 'Admin Home' }} />
+      <Tabs.Screen name="AdminScreen" options={{ title: 'Manage Reports' }} />
     </Tabs>
   );
 }
