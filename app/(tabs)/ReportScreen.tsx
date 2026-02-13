@@ -12,6 +12,7 @@ import {
   ScrollView,
   Button,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 
 import {
@@ -30,6 +31,7 @@ export default function ReportScreen() {
   const [cameraVisible, setCameraVisible] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
   const [isPreview, setIsPreview] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const [cameraType, setCameraType] = useState<CameraType>('back');
   const [flash, setFlash] = useState<FlashMode>('off');
@@ -81,16 +83,21 @@ export default function ReportScreen() {
     } as any);
 
     try {
-      const response = await fetch('http://192.168.1.14:5000/predict', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const response = await fetch(
+        'https://peckier-unentomological-chin.ngrok-free.dev/predict',
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
 
-      return await response.json();
+      const data = await response.json();
 
+      if (!response.ok) {
+        throw new Error(data.error || 'AI server error');
+      }
+
+      return data;
     } catch (error) {
       Alert.alert('AI Error', 'Failed to analyze image');
       return null;
@@ -109,19 +116,22 @@ export default function ReportScreen() {
       return;
     }
 
+    setLoading(true);
+
     const aiResult = await analyzePothole();
 
     if (!aiResult) {
-      Alert.alert('Error', 'AI analysis failed');
+      setLoading(false);
       return;
     }
 
-    // ✅ ONLY LOGIC CHANGE IS HERE
+    // AI only validates pothole
     if (aiResult.class === 'Normal') {
       Alert.alert(
         'No Pothole Detected',
         'The image does not contain a pothole'
       );
+      setLoading(false);
       return;
     }
 
@@ -130,38 +140,30 @@ export default function ReportScreen() {
         'Invalid Image',
         'Please capture a clear pothole image'
       );
+      setLoading(false);
       return;
     }
 
-    const autoSeverity =
-      aiResult.confidence >= 0.85 ? 'Severe' : 'Medium';
-
-    setSeverity(autoSeverity);
-
     try {
       await addDoc(collection(db, 'reports'), {
-        userId: auth.currentUser.uid,
-        photoUrl: photo,
-        severity: autoSeverity,
-        details: details,
-        aiConfidence: aiResult.confidence,
-        status: 'pending',
-        location: {
-          lat: 6.9271,
-          lng: 79.8612,
-        },
+        description: details || "",
+        imageUrl: photo || "",
         createdAt: serverTimestamp(),
+        severity: severity, // ✅ USER CHOICE
+        status: "pending",
+        userId: auth.currentUser.uid,
       });
 
-      Alert.alert('Success', 'AI verified pothole report submitted ✅');
+      Alert.alert('Success', 'Pothole report submitted ✅');
 
       setPhoto(null);
       setDetails('');
       setSeverity('Medium');
-
     } catch (error) {
       Alert.alert('Error', 'Failed to submit report');
     }
+
+    setLoading(false);
   };
 
   /* ================= CAMERA VIEW ================= */
@@ -174,7 +176,9 @@ export default function ReportScreen() {
         flash={flash}
       >
         <View style={styles.topControls}>
-          <TouchableOpacity onPress={() => setFlash(flash === 'off' ? 'on' : 'off')}>
+          <TouchableOpacity
+            onPress={() => setFlash(flash === 'off' ? 'on' : 'off')}
+          >
             <Ionicons
               name={flash === 'on' ? 'flash' : 'flash-off'}
               size={28}
@@ -288,8 +292,15 @@ export default function ReportScreen() {
       <TouchableOpacity
         style={styles.submitButton}
         onPress={handleSubmitReport}
+        disabled={loading}
       >
-        <Text style={styles.submitText}>✓ Submit Report</Text>
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.submitText}>
+            ✓ Submit Report
+          </Text>
+        )}
       </TouchableOpacity>
 
       <View style={styles.rewardBox}>
