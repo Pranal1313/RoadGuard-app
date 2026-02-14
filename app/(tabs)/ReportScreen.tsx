@@ -40,6 +40,7 @@ export default function ReportScreen() {
   const [flash, setFlash] = useState<FlashMode>("off");
   const [severity, setSeverity] = useState<"Medium" | "Severe">("Medium");
   const [details, setDetails] = useState("");
+  const [location, setLocation] = useState("Main Street & 5th Avenue, Downtown");
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -154,6 +155,7 @@ export default function ReportScreen() {
         imageUrl: downloadURL,
         createdAt: serverTimestamp(),
         severity,
+        location,
         status: "pending",
         userId: auth.currentUser.uid,
       });
@@ -163,11 +165,17 @@ export default function ReportScreen() {
       setDetails("");
       setSeverity("Medium");
       setProgress(0);
+      setLocation("Main Street & 5th Avenue, Downtown");
     } catch (error: any) {
       Alert.alert("Upload failed: " + error.message);
     }
 
     setLoading(false);
+  };
+
+  const useCurrentLocation = () => {
+    // TODO: Replace with Expo Location API for real GPS
+    setLocation("Current GPS Location");
   };
 
   if (cameraVisible && !isPreview) {
@@ -255,6 +263,18 @@ export default function ReportScreen() {
         onChangeText={setDetails}
       />
 
+      {/* LOCATION */}
+      <Text style={styles.label}>Location *</Text>
+      <View style={styles.locationBox}>
+        <Ionicons name="location-outline" size={18} color="#6b7280" />
+        <Text style={styles.locationText}>{location}</Text>
+      </View>
+
+      <TouchableOpacity style={styles.useLocation} onPress={useCurrentLocation}>
+        <Ionicons name="navigate" size={16} color="#4F7DF3" />
+        <Text style={styles.useLocationText}>Use Current Location</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity
         style={[styles.submitButton, loading ? styles.submitButtonUploading : styles.submitButtonIdle]}
         onPress={handleSubmitReport}
@@ -300,18 +320,38 @@ const styles = StyleSheet.create({
   photoText: { marginTop: 6, color: "#4F7DF3", fontWeight: "600" },
 
   severityRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
-  severityButton: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: "#F3F4F6", alignItems: "center", marginHorizontal: 5 },
+  severityButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    marginHorizontal: 5,
+  },
   severityMediumActive: { backgroundColor: "#F59E0B" },
   severitySevereActive: { backgroundColor: "#EF4444" },
   severityText: { color: "#6B7280", fontWeight: "600" },
   severityTextActive: { color: "#fff" },
 
-  textArea: { height: 100, backgroundColor: "#F3F4F6", borderRadius: 10, padding: 12, marginBottom: 28, textAlignVertical: "top" },
+  textArea: {
+    height: 100,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 28,
+    textAlignVertical: "top",
+  },
 
   submitButton: { height: 50, borderRadius: 12, overflow: "hidden", marginBottom: 20 },
   submitButtonIdle: { backgroundColor: "#577FEF" },
   submitButtonUploading: { backgroundColor: "#D1D5DB" },
-  submitButtonContainer: { flex: 1, justifyContent: "center", alignItems: "center", position: "relative", width: "100%" },
+  submitButtonContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    position: "relative",
+    width: "100%",
+  },
   submitButtonProgress: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: "#577FEF", zIndex: 0 },
   submitButtonText: { color: "#fff", fontWeight: "700", zIndex: 1 },
 
@@ -326,4 +366,26 @@ const styles = StyleSheet.create({
   previewActions: { flexDirection: "row", justifyContent: "space-around", padding: 16, backgroundColor: "#000" },
   retake: { color: "#F87171", fontSize: 16 },
   confirm: { color: "#4ADE80", fontSize: 16 },
+
+  /* LOCATION */
+  locationBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f3f4f6',
+    padding: 14,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  locationText: { color: '#3c5782' },
+  useLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f3f4f6',
+    padding: 14,
+    borderRadius: 10,
+    marginBottom: 24,
+  },
+  useLocationText: { color: '#4F7DF3', fontWeight: '600' },
 });

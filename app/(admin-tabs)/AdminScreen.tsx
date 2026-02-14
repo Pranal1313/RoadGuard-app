@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,59 +7,67 @@ import {
   StatusBar,
   Platform,
   TouchableOpacity,
-} from 'react-native';
-import {
-  User,
-  MapPin,
-  AlertCircle,
-  CheckCircle,
-  XCircle,
-} from 'lucide-react-native';
+  Image,
+  Alert,
+} from "react-native";
+import { User, MapPin, AlertCircle, CheckCircle } from "lucide-react-native";
+import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
+import { db } from "../../firebaseConfig";
 
-/* ---------- Types ---------- */
-
-type ReportStatus = 'Pending' | 'Verified' | 'Rejected';
+type ReportStatus = "pending" | "verified";
 
 type Report = {
-  id: number;
+  id: string;
   address: string;
-  name: string;
+  userId: string;
+  userName: string; // Full name from users collection
   status: ReportStatus;
+  imageUrl: string;
 };
 
-/* ---------- Mock Data ---------- */
-
-const REPORTS: Report[] = [
-  {
-    id: 1,
-    address: 'Main Street & 5th Avenue',
-    name: 'John Doe',
-    status: 'Pending',
-  },
-  {
-    id: 2,
-    address: 'Elm Street, Block 4',
-    name: 'Sarah Khan',
-    status: 'Pending',
-  },
-  {
-    id: 3,
-    address: 'Market Road',
-    name: 'Alex Smith',
-    status: 'Verified',
-  },
-];
-
-/* ---------- Screen ---------- */
+/* ------------ Admin Screen ------------ */
 
 export default function AdminDashboardScreen() {
-  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Reports'>(
-    'Dashboard'
-  );
+  const [activeTab, setActiveTab] = useState<"Dashboard" | "Reports">("Dashboard");
+  const [reports, setReports] = useState<Report[]>([]);
 
-  const total = REPORTS.length;
-  const pending = REPORTS.filter(r => r.status === 'Pending').length;
-  const verified = REPORTS.filter(r => r.status === 'Verified').length;
+  // Fetch all reports and map userId → fullName
+  const fetchReports = async () => {
+    try {
+      const usersSnap = await getDocs(collection(db, "users"));
+      const usersMap: Record<string, string> = {};
+      usersSnap.docs.forEach((doc) => {
+        const data = doc.data() as any;
+        usersMap[doc.id] = data.fullName || "Unknown";
+      });
+
+      const reportsSnap = await getDocs(collection(db, "reports"));
+      const loaded: Report[] = reportsSnap.docs.map((docSnap) => {
+        const d = docSnap.data() as any;
+        return {
+          id: docSnap.id,
+          userId: d.userId,
+          userName: usersMap[d.userId] || "Anonymous", // use fullName
+          address: d.address || "Unknown Location",
+          status: d.status || "pending",
+          imageUrl: d.imageUrl || "",
+        };
+      });
+
+      setReports(loaded);
+    } catch (err) {
+      Alert.alert("Error", "Failed to load reports");
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchReports();
+  }, []);
+
+  const total = reports.length;
+  const pending = reports.filter((r) => r.status === "pending").length;
+  const verified = reports.filter((r) => r.status === "verified").length;
 
   return (
     <View style={styles.safe}>
@@ -71,105 +79,49 @@ export default function AdminDashboardScreen() {
               <Text style={styles.title}>RoadGuard Admin</Text>
               <Text style={styles.subtitle}>Management Dashboard</Text>
             </View>
-
-            {/* Profile Icon */}
             <View style={styles.profile}>
               <User color="white" size={22} />
             </View>
           </View>
         </View>
 
-        {/* PANEL SWITCH */}
+        {/* TABS */}
         <View style={styles.tabContainer}>
-          <TabButton
-            label="Dashboard"
-            active={activeTab === 'Dashboard'}
-            onPress={() => setActiveTab('Dashboard')}
-          />
-          <TabButton
-            label="Reports"
-            active={activeTab === 'Reports'}
-            onPress={() => setActiveTab('Reports')}
-          />
+          <TabButton label="Dashboard" active={activeTab === "Dashboard"} onPress={() => setActiveTab("Dashboard")} />
+          <TabButton label="Reports" active={activeTab === "Reports"} onPress={() => setActiveTab("Reports")} />
         </View>
 
         {/* CONTENT */}
-        {activeTab === 'Dashboard' ? (
-          <>
-            {/* DASHBOARD STATS */}
-            <View style={styles.section}>
-              <DashboardCard
-                icon={<MapPin color="#2563EB" size={22} />}
-                label="Total Reports"
-                value={total}
-              />
-              <DashboardCard
-                icon={<AlertCircle color="#F59E0B" size={22} />}
-                label="Pending Reports"
-                value={pending}
-              />
-              <DashboardCard
-                icon={<CheckCircle color="#16A34A" size={22} />}
-                label="Verified Reports"
-                value={verified}
-              />
-            </View>
-
-            {/* MAP OVERVIEW */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Map Overview</Text>
-              <MapOverview />
-            </View>
-          </>
+        {activeTab === "Dashboard" ? (
+          <View style={styles.section}>
+            <DashboardCard icon={<MapPin color="#2563EB" size={22} />} label="Total Reports" value={total} />
+            <DashboardCard icon={<AlertCircle color="#F59E0B" size={22} />} label="Pending Reports" value={pending} />
+            <DashboardCard icon={<CheckCircle color="#16A34A" size={22} />} label="Verified Reports" value={verified} />
+          </View>
         ) : (
-          <>
-            {/* REPORTS PANEL */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>All Reports</Text>
-
-              {REPORTS.map(r => (
-                <ReportCard key={r.id} report={r} />
-              ))}
-            </View>
-          </>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>All Reports</Text>
+            {reports.map((report) => (
+              <ReportCard key={report.id} report={report} refresh={fetchReports} />
+            ))}
+          </View>
         )}
       </ScrollView>
     </View>
   );
 }
 
-/* ---------- Components ---------- */
+/* ------------ Components ------------ */
 
-function TabButton({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
+function TabButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <TouchableOpacity
-      style={[styles.tabBtn, active && styles.tabBtnActive]}
-      onPress={onPress}
-    >
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>
-        {label}
-      </Text>
+    <TouchableOpacity style={[styles.tabBtn, active && styles.tabBtnActive]} onPress={onPress}>
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function DashboardCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-}) {
+function DashboardCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
   return (
     <View style={styles.card}>
       <View style={styles.rowBetween}>
@@ -183,220 +135,70 @@ function DashboardCard({
   );
 }
 
-function ReportCard({ report }: { report: Report }) {
+function ReportCard({ report, refresh }: { report: Report; refresh: () => void }) {
+  const verifyReport = async () => {
+    try {
+      await updateDoc(doc(db, "reports", report.id), { status: "verified" });
+      Alert.alert("Verified", "Report marked as verified");
+      refresh();
+    } catch (err) {
+      Alert.alert("Error", "Could not verify report");
+      console.error(err);
+    }
+  };
+
   return (
     <View style={styles.reportCard}>
-      <View>
+      {report.imageUrl ? <Image source={{ uri: report.imageUrl }} style={styles.reportImage} /> : null}
+      <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={styles.address}>{report.address}</Text>
-        <Text style={styles.name}>Reported by {report.name}</Text>
+        <Text style={styles.name}>Reported by {report.userName}</Text>
+        <Text style={styles.statusText}>Status: {report.status.toUpperCase()}</Text>
       </View>
-
-      <View style={styles.reportActions}>
-        <ActionBtn icon={<CheckCircle color="white" size={18} />} bg="#22c55e" />
-        <ActionBtn icon={<XCircle color="white" size={18} />} bg="#ef4444" />
-      </View>
+      {report.status === "pending" && (
+        <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#22c55e" }]} onPress={verifyReport}>
+          <CheckCircle color="white" size={20} />
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
 
-function ActionBtn({
-  icon,
-  bg,
-}: {
-  icon: React.ReactNode;
-  bg: string;
-}) {
-  return (
-    <TouchableOpacity style={[styles.actionBtn, { backgroundColor: bg }]}>
-      {icon}
-    </TouchableOpacity>
-  );
-}
-
-/* ---------- Map Preview ---------- */
-
-function MapOverview() {
-  return (
-    <View style={styles.mapBox}>
-      <View style={styles.fakeMap}>
-        <View style={[styles.pin, { top: 40, left: 60 }]} />
-        <View style={[styles.pin, { top: 80, right: 70 }]} />
-        <View style={[styles.pin, { bottom: 50, left: 120 }]} />
-      </View>
-    </View>
-  );
-}
-
-/* ---------- Styles ---------- */
-
+/* ------------ Styles ------------ */
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F5F7FB',
-  },
-
+  safe: { flex: 1, backgroundColor: "#F5F7FB" },
   header: {
-    backgroundColor: '#035a1a',
+    backgroundColor: "#035a1a",
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 30,
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 30,
     paddingBottom: 30,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-
+    borderRadius: 24,
   },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  title: { color: "white", fontSize: 20, fontWeight: "700" },
+  subtitle: { color: "#DBEAFE", marginTop: 4 },
+  profile: { backgroundColor: "rgba(255,255,255,0.25)", padding: 12, borderRadius: 999 },
 
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
+  tabContainer: { flexDirection: "row", margin: 20, backgroundColor: "#E5E7EB", borderRadius: 16, overflow: "hidden" },
+  tabBtn: { flex: 1, paddingVertical: 12, alignItems: "center" },
+  tabBtnActive: { backgroundColor: "#068608" },
+  tabText: { fontWeight: "600", color: "#374151" },
+  tabTextActive: { color: "white" },
 
-  title: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: '700',
-  },
+  section: { paddingHorizontal: 20, marginTop: 10 },
+  sectionTitle: { fontSize: 16, fontWeight: "600", marginBottom: 12 },
 
-  subtitle: {
-    color: '#DBEAFE',
-    marginTop: 4,
-  },
+  card: { backgroundColor: "white", padding: 16, borderRadius: 18, marginBottom: 14 },
+  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  row: { flexDirection: "row", alignItems: "center", gap: 12 },
+  iconBubble: { backgroundColor: "#EFF6FF", padding: 10, borderRadius: 12 },
+  cardLabel: { fontWeight: "600" },
+  cardValue: { fontSize: 22, fontWeight: "800" },
 
-  profile: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    padding: 12,
-    borderRadius: 999,
-  },
-
-  /* TABS */
-  tabContainer: {
-    flexDirection: 'row',
-    margin: 20,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-
-  tabBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-
-  tabBtnActive: {
-    backgroundColor: '#068608',
-  },
-
-  tabText: {
-    fontWeight: '600',
-    color: '#374151',
-  },
-
-  tabTextActive: {
-    color: 'white',
-  },
-
-  /* SECTION */
-  section: {
-    paddingHorizontal: 20,
-    marginTop: 10,
-  },
-
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-
-  /* DASHBOARD CARD */
-  card: {
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 18,
-    marginBottom: 14,
-  },
-
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-
-  iconBubble: {
-    backgroundColor: '#EFF6FF',
-    padding: 10,
-    borderRadius: 12,
-  },
-
-  cardLabel: {
-    fontWeight: '600',
-  },
-
-  cardValue: {
-    fontSize: 22,
-    fontWeight: '800',
-  },
-
-  /* REPORTS */
-  reportCard: {
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 18,
-    marginBottom: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  address: {
-    fontWeight: '700',
-  },
-
-  name: {
-    color: '#6b7280',
-    marginTop: 4,
-  },
-
-  reportActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-
-  actionBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  /* MAP */
-  mapBox: {
-    backgroundColor: 'white',
-    borderRadius: 18,
-    padding: 12,
-  },
-
-  fakeMap: {
-    height: 180,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 14,
-    position: 'relative',
-  },
-
-  pin: {
-    position: 'absolute',
-    width: 14,
-    height: 14,
-    backgroundColor: '#EF4444',
-    borderRadius: 7,
-  },
+  reportCard: { backgroundColor: "white", padding: 16, borderRadius: 18, marginBottom: 14, flexDirection: "row", alignItems: "center" },
+  reportImage: { width: 80, height: 80, borderRadius: 12 },
+  address: { fontWeight: "700" },
+  name: { color: "#6b7280", marginTop: 4 },
+  statusText: { marginTop: 2, color: "#555", fontSize: 12 },
+  actionBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 12 },
 });

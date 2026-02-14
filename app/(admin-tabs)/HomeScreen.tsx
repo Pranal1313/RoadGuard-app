@@ -1,20 +1,76 @@
-import { View, Text, StyleSheet, ScrollView, Pressable, StatusBar, Platform } from 'react-native';
-import { Menu, Bell, Camera, Award, MapPin, TrendingUp } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  StatusBar,
+  Platform,
+  Image,
+} from 'react-native';
+import {
+  Menu,
+  Bell,
+  Camera,
+  Award,
+  MapPin,
+  TrendingUp,
+} from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { auth, db } from '../../firebaseConfig';
 import StatsCard from '../components/StatsCard';
 import MapPreview from '../components/MapPreview';
-import RecentReports from '../components/RecentReports';
 
-export default function HomeScreen() {
+type Report = {
+  id: string;
+  imageUrl: string;
+  location: string;
+  status: string;
+};
+
+export default function AdminHomeScreen() {
+  const router = useRouter();
+  const [credits, setCredits] = useState(0); // Could represent admin points or ignore
+  const [reports, setReports] = useState<Report[]>([]);
+
+  /* ---------- Load Recent Reports (Admin sees all) ---------- */
+  useEffect(() => {
+    const fetchReports = async () => {
+      try {
+        const reportsRef = collection(db, 'reports');
+        const q = query(reportsRef, orderBy('createdAt', 'desc'), limit(2)); // Only latest 2
+        const snapshot = await getDocs(q);
+
+        const loaded: Report[] = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data() as any;
+          return {
+            id: docSnap.id,
+            imageUrl: data.imageUrl || '',
+            location: data.address || 'Unknown Location',
+            status: data.status || 'pending',
+          };
+        });
+
+        setReports(loaded);
+      } catch (err) {
+        console.error('Failed to fetch reports', err);
+      }
+    };
+
+    fetchReports();
+  }, []);
+
   return (
     <View style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <View style={styles.row}>
               <Menu color="white" size={24} />
-              <Text style={styles.title}>RoadGuard</Text>
+              <Text style={styles.title}>RoadGuard Admin</Text>
             </View>
             <Bell color="white" size={22} />
           </View>
@@ -23,9 +79,9 @@ export default function HomeScreen() {
           <View style={styles.creditsCard}>
             <View style={styles.rowBetween}>
               <View>
-                <Text style={styles.subText}>Your Credits</Text>
+                <Text style={styles.subText}>Admin Points</Text>
                 <Text style={styles.credits}>
-                  1250 <Text style={styles.points}>points</Text>
+                  {credits} <Text style={styles.points}>points</Text>
                 </Text>
               </View>
               <View style={styles.iconBubble}>
@@ -34,7 +90,7 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.divider} />
-            <Text style={styles.redeemText}>Redeemable for highway tolls</Text>
+            <Text style={styles.redeemText}>Manage reports efficiently</Text>
           </View>
         </View>
 
@@ -43,17 +99,20 @@ export default function HomeScreen() {
           <StatsCard
             icon={<MapPin color="#2563EB" size={20} />}
             label="Total Reports"
-            value={23}
+            value={reports.length}
           />
           <StatsCard
             icon={<TrendingUp color="#16A34A" size={20} />}
             label="Verified"
-            value={18}
+            value={reports.filter((r) => r.status === 'verified').length}
           />
         </View>
 
         {/* Report Button */}
-        <Pressable style={styles.reportButton}>
+        <Pressable
+          style={styles.reportButton}
+          onPress={() => router.push('/ReportScreen')} // Navigate to ReportScreen
+        >
           <Camera color="black" size={22} />
           <Text style={styles.reportText}>Report a Pothole</Text>
         </Pressable>
@@ -71,137 +130,65 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Reports</Text>
-            <Text style={styles.link}>See All</Text>
           </View>
-          <RecentReports />
-        </View>
 
+          {reports.length === 0 ? (
+            <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>
+              No reports submitted yet.
+            </Text>
+          ) : (
+            reports.map((report) => (
+              <View key={report.id} style={styles.reportCard}>
+                {report.imageUrl && (
+                  <Image
+                    source={{ uri: report.imageUrl }}
+                    style={styles.reportImage}
+                  />
+                )}
+                <View style={{ flex: 1, marginLeft: report.imageUrl ? 12 : 0 }}>
+                  <Text style={styles.reportLocation}>{report.location}</Text>
+                  <Text style={styles.reportStatus}>
+                    Status: {report.status.toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F5F7FB',
-  },
-
+  safe: { flex: 1, backgroundColor: '#F5F7FB' },
   header: {
     backgroundColor: '#042262',
     paddingHorizontal: 19,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 23, // <-- Notch/status bar safe
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 23,
     paddingBottom: 28,
-    borderBottomLeftRadius: 22,
-    borderBottomRightRadius: 22,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
+    borderRadius: 22,
   },
-
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-
-  title: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: '600',
-  },
-
-  creditsCard: {
-    backgroundColor: 'rgba(133, 125, 125, 0.15)',
-    borderRadius: 20,
-    padding: 16,
-  },
-
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-
-  subText: {
-    color: '#DBEAFE',
-    fontSize: 13,
-  },
-
-  credits: {
-    color: 'white',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-
-  points: {
-    fontSize: 14,
-    fontWeight: '400',
-  },
-
-  iconBubble: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    padding: 12,
-    borderRadius: 999,
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    marginVertical: 12,
-  },
-
-  redeemText: {
-    color: '#DBEAFE',
-    fontSize: 13,
-  },
-
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 20,
-  },
-
-  reportButton: {
-    flexDirection: 'row',
-    backgroundColor: '#a8bff1',
-    marginHorizontal: 20,
-    padding: 16,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-
-  reportText: {
-    color: 'black',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  section: {
-    paddingHorizontal: 20,
-    marginTop: 20,
-  },
-
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  link: {
-    color: '#2563EB',
-    fontSize: 13,
-  },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  title: { color: 'white', fontSize: 20, fontWeight: '600' },
+  creditsCard: { backgroundColor: 'rgba(133,125,125,0.15)', borderRadius: 20, padding: 16 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between' },
+  subText: { color: '#DBEAFE', fontSize: 13 },
+  credits: { color: 'white', fontSize: 28, fontWeight: '700' },
+  points: { fontSize: 14, fontWeight: '400' },
+  iconBubble: { backgroundColor: 'rgba(255,255,255,0.25)', padding: 12, borderRadius: 999 },
+  divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.3)', marginVertical: 12 },
+  redeemText: { color: '#DBEAFE', fontSize: 13 },
+  statsRow: { flexDirection: 'row', gap: 12, padding: 20 },
+  reportButton: { flexDirection: 'row', backgroundColor: '#a8bff1', marginHorizontal: 20, padding: 16, borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  reportText: { color: 'black', fontSize: 16, fontWeight: '600' },
+  section: { paddingHorizontal: 20, marginTop: 20 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  sectionTitle: { fontSize: 16, fontWeight: '600' },
+  link: { color: '#2563EB', fontSize: 13 },
+  reportCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 12, marginBottom: 12 },
+  reportImage: { width: 60, height: 60, borderRadius: 8 },
+  reportLocation: { fontWeight: '600', fontSize: 14 },
+  reportStatus: { fontSize: 12, color: '#6B7280', marginTop: 2 },
 });

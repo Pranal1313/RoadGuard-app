@@ -8,6 +8,7 @@ import {
   Platform,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import {
   ChevronLeft,
@@ -19,23 +20,33 @@ import {
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
 import { auth, db } from '../../firebaseConfig';
-import RecentReports from '../components/RecentReports';
 
+/* ------------ Types ------------ */
+type Report = {
+  id: string;
+  imageUrl: string;
+  description?: string;
+  severity?: string;
+  status: string;
+  location?: string;
+};
+
+/* ------------ UserProfile Screen ------------ */
 export default function UserProfile() {
   const router = useRouter();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [credits, setCredits] = useState(0);
+  const [reports, setReports] = useState<Report[]>([]);
 
   /* ---------- LOAD USER DATA ---------- */
   useEffect(() => {
     const loadUserData = async () => {
       const user = auth.currentUser;
-
       if (!user) {
         router.replace('/login');
         return;
@@ -46,14 +57,37 @@ export default function UserProfile() {
       try {
         const docRef = doc(db, 'users', user.uid);
         const docSnap = await getDoc(docRef);
-
         if (docSnap.exists()) {
           const data = docSnap.data();
           setFullName(data.fullName || 'User');
-          setCredits(data.credits || 1250);
+          setCredits(data.credits || 0 );
         }
       } catch (error) {
         Alert.alert('Error', 'Failed to load profile data');
+      }
+
+      // Fetch user reports
+      try {
+        const reportsQuery = query(
+          collection(db, 'reports'),
+          where('userId', '==', user.uid)
+        );
+        const reportsSnap = await getDocs(reportsQuery);
+        const loadedReports: Report[] = reportsSnap.docs.map((docSnap) => {
+          const d = docSnap.data() as any;
+          return {
+            id: docSnap.id,
+            imageUrl: d.imageUrl || '',
+            description: d.description || '',
+            severity: d.severity || '',
+            status: d.status || 'pending',
+            location: d.location || 'Unknown location',
+          };
+        });
+        setReports(loadedReports);
+      } catch (err) {
+        Alert.alert('Error', 'Failed to load your reports');
+        console.error(err);
       }
     };
 
@@ -70,7 +104,7 @@ export default function UserProfile() {
   const initials = fullName
     ? fullName
         .split(' ')
-        .map(word => word[0])
+        .map((word) => word[0])
         .join('')
         .toUpperCase()
     : 'U';
@@ -84,19 +118,16 @@ export default function UserProfile() {
             <TouchableOpacity onPress={() => router.back()}>
               <ChevronLeft color="white" size={24} />
             </TouchableOpacity>
-
             <Text style={styles.headerTitle}>Profile</Text>
             <Settings color="white" size={22} />
           </View>
 
           {/* Profile Card */}
           <View style={styles.profileCard}>
-            {/* User Info */}
             <View style={styles.profileRow}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{initials}</Text>
               </View>
-
               <View>
                 <Text style={styles.name}>{fullName}</Text>
                 <Text style={styles.email}>{email}</Text>
@@ -106,10 +137,7 @@ export default function UserProfile() {
             {/* Credits */}
             <View style={styles.creditsBox}>
               <View style={styles.creditsHeader}>
-                <Text style={styles.creditsLabel}>
-                  Total Credits Earned
-                </Text>
-
+                <Text style={styles.creditsLabel}>Total Credits Earned</Text>
                 <View style={styles.awardIcon}>
                   <Award size={18} color="white" />
                 </View>
@@ -132,18 +160,29 @@ export default function UserProfile() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>My Reports</Text>
-            <Text style={styles.link}>See All</Text>
           </View>
 
-          <RecentReports />
+          {reports.length === 0 ? (
+            <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>You have not submitted any reports yet.</Text>
+          ) : (
+            reports.map((report) => (
+              <View key={report.id} style={styles.reportCard}>
+                {report.imageUrl ? (
+                  <Image source={{ uri: report.imageUrl }} style={styles.reportImage} />
+                ) : null}
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.address}>{report.location}</Text>
+                  {report.severity && <Text style={styles.name}>Severity: {report.severity}</Text>}
+                  <Text style={styles.statusText}>Status: {report.status.toUpperCase()}</Text>
+                </View>
+              </View>
+            ))
+          )}
         </View>
 
         {/* Actions */}
         <View style={styles.actionsBox}>
-          <ActionItem
-            icon={<Edit size={20} color="#2563EB" />}
-            label="Edit Profile"
-          />
+          <ActionItem icon={<Edit size={20} color="#2563EB" />} label="Edit Profile" />
           <ActionItem
             icon={<LogOut size={20} color="#DC2626" />}
             label="Logout"
@@ -175,14 +214,7 @@ function ActionItem({
   return (
     <TouchableOpacity style={styles.actionItem} onPress={onPress}>
       {icon}
-      <Text
-        style={[
-          styles.actionText,
-          danger && { color: '#DC2626' },
-        ]}
-      >
-        {label}
-      </Text>
+      <Text style={[styles.actionText, danger && { color: '#DC2626' }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -330,11 +362,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  link: {
-    color: '#2563EB',
-    fontSize: 13,
-  },
-
   actionsBox: {
     backgroundColor: 'white',
     borderRadius: 18,
@@ -366,4 +393,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9CA3AF',
   },
+
+  reportCard: {
+    backgroundColor: 'white',
+    padding: 16,
+    borderRadius: 18,
+    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  reportImage: { width: 80, height: 80, borderRadius: 12 },
+  address: { fontWeight: '700' },
+  statusText: { marginTop: 2, color: '#555', fontSize: 12 },
 });
