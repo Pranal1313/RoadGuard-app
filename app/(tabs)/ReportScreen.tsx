@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../../firebaseConfig';
+import React, { useRef, useState, useEffect } from "react";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { auth, db, storage } from "../../firebaseConfig";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import {
   View,
@@ -12,36 +13,43 @@ import {
   ScrollView,
   Button,
   Alert,
-  ActivityIndicator,
-} from 'react-native';
+  Animated,
+} from "react-native";
 
 import {
   CameraView,
   CameraType,
   FlashMode,
   useCameraPermissions,
-} from 'expo-camera';
+} from "expo-camera";
 
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from "@expo/vector-icons";
 
 export default function ReportScreen() {
   const cameraRef = useRef<CameraView>(null);
-
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraVisible, setCameraVisible] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
   const [isPreview, setIsPreview] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
 
-  const [cameraType, setCameraType] = useState<CameraType>('back');
-  const [flash, setFlash] = useState<FlashMode>('off');
+  const progressAnim = useRef(new Animated.Value(0)).current;
 
-  const [severity, setSeverity] = useState<'Medium' | 'Severe'>('Medium');
-  const [details, setDetails] = useState('');
+  const [cameraType, setCameraType] = useState<CameraType>("back");
+  const [flash, setFlash] = useState<FlashMode>("off");
+  const [severity, setSeverity] = useState<"Medium" | "Severe">("Medium");
+  const [details, setDetails] = useState("");
 
-  /* ---------- PERMISSIONS ---------- */
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: progress,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [progress]);
+
   if (!permission) return <View />;
-
   if (!permission.granted) {
     return (
       <View style={styles.center}>
@@ -51,7 +59,6 @@ export default function ReportScreen() {
     );
   }
 
-  /* ---------- CAMERA ACTIONS ---------- */
   const takePicture = async () => {
     if (cameraRef.current) {
       const result = await cameraRef.current.takePictureAsync();
@@ -71,141 +78,116 @@ export default function ReportScreen() {
     setIsPreview(false);
   };
 
-  /* ---------- AI PREDICTION ---------- */
   const analyzePothole = async () => {
     if (!photo) return null;
-
     const formData = new FormData();
-    formData.append('image', {
+    formData.append("image", {
       uri: photo,
-      name: 'pothole.jpg',
-      type: 'image/jpeg',
+      name: "pothole.jpg",
+      type: "image/jpeg",
     } as any);
 
     try {
       const response = await fetch(
-        'https://peckier-unentomological-chin.ngrok-free.dev/predict',
+        "https://peckier-unentomological-chin.ngrok-free.dev/predict",
         {
-          method: 'POST',
+          method: "POST",
           body: formData,
         }
       );
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'AI server error');
-      }
-
+      if (!response.ok) throw new Error(data.error || "AI server error");
       return data;
     } catch (error) {
-      Alert.alert('AI Error', 'Failed to analyze image');
+      Alert.alert("AI Error", "Failed to analyze image");
       return null;
     }
   };
 
-  /* ---------- SUBMIT REPORT ---------- */
   const handleSubmitReport = async () => {
-    if (!photo) {
-      Alert.alert('Error', 'Please take a photo of the pothole');
-      return;
-    }
-
-    if (!auth.currentUser) {
-      Alert.alert('Error', 'You must be logged in');
-      return;
-    }
+    if (!photo) return Alert.alert("Error", "Please take a photo of the pothole");
+    if (!auth.currentUser) return Alert.alert("Error", "You must be logged in");
 
     setLoading(true);
+    setProgress(0);
 
     const aiResult = await analyzePothole();
+    if (!aiResult) return setLoading(false);
 
-    if (!aiResult) {
-      setLoading(false);
-      return;
-    }
-
-    // AI only validates pothole
-    if (aiResult.class === 'Normal') {
-      Alert.alert(
-        'No Pothole Detected',
-        'The image does not contain a pothole'
-      );
-      setLoading(false);
-      return;
-    }
-
-    if (aiResult.class !== 'Pothole') {
-      Alert.alert(
-        'Invalid Image',
-        'Please capture a clear pothole image'
-      );
-      setLoading(false);
-      return;
+    if (aiResult.class !== "Pothole") {
+      Alert.alert("Invalid Image", "The image does not contain a pothole");
+      return setLoading(false);
     }
 
     try {
-      await addDoc(collection(db, 'reports'), {
+      const blob: Blob = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.onload = () => resolve(xhr.response);
+        xhr.onerror = () => reject(new TypeError("Network request failed"));
+        xhr.responseType = "blob";
+        xhr.open("GET", photo, true);
+        xhr.send(null);
+      });
+
+      const fileName = `reports/${auth.currentUser.uid}_${Date.now()}.jpg`;
+      const storageRef = ref(storage, fileName);
+      const uploadTask = uploadBytesResumable(storageRef, blob, {
+        contentType: "image/jpeg",
+      });
+
+      await new Promise((resolve, reject) => {
+        uploadTask.on(
+          "state_changed",
+          (snapshot) => {
+            const percent = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            setProgress(percent);
+          },
+          (error) => reject(error),
+          () => resolve(true)
+        );
+      });
+
+      const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+
+      await addDoc(collection(db, "reports"), {
         description: details || "",
-        imageUrl: photo || "",
+        imageUrl: downloadURL,
         createdAt: serverTimestamp(),
-        severity: severity, // ✅ USER CHOICE
+        severity,
         status: "pending",
         userId: auth.currentUser.uid,
       });
 
-      Alert.alert('Success', 'Pothole report submitted ✅');
-
+      Alert.alert("Success", "AI verified pothole report submitted ✅");
       setPhoto(null);
-      setDetails('');
-      setSeverity('Medium');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to submit report');
+      setDetails("");
+      setSeverity("Medium");
+      setProgress(0);
+    } catch (error: any) {
+      Alert.alert("Upload failed: " + error.message);
     }
 
     setLoading(false);
   };
 
-  /* ================= CAMERA VIEW ================= */
   if (cameraVisible && !isPreview) {
     return (
-      <CameraView
-        ref={cameraRef}
-        style={{ flex: 1 }}
-        facing={cameraType}
-        flash={flash}
-      >
+      <CameraView ref={cameraRef} style={{ flex: 1 }} facing={cameraType} flash={flash}>
         <View style={styles.topControls}>
-          <TouchableOpacity
-            onPress={() => setFlash(flash === 'off' ? 'on' : 'off')}
-          >
-            <Ionicons
-              name={flash === 'on' ? 'flash' : 'flash-off'}
-              size={28}
-              color="white"
-            />
+          <TouchableOpacity onPress={() => setFlash(flash === "off" ? "on" : "off")}>
+            <Ionicons name={flash === "on" ? "flash" : "flash-off"} size={28} color="white" />
           </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() =>
-              setCameraType(cameraType === 'back' ? 'front' : 'back')
-            }
-          >
+          <TouchableOpacity onPress={() => setCameraType(cameraType === "back" ? "front" : "back")}>
             <Ionicons name="camera-reverse" size={30} color="white" />
           </TouchableOpacity>
         </View>
-
         <View style={styles.cameraBottom}>
-          <TouchableOpacity
-            style={styles.captureButton}
-            onPress={takePicture}
-          />
+          <TouchableOpacity style={styles.captureButton} onPress={takePicture} />
         </View>
       </CameraView>
     );
   }
 
-  /* ================= PHOTO PREVIEW ================= */
   if (isPreview && photo) {
     return (
       <View style={{ flex: 1 }}>
@@ -222,17 +204,18 @@ export default function ReportScreen() {
     );
   }
 
-  /* ================= MAIN UI ================= */
+  const animatedWidth = progressAnim.interpolate({
+    inputRange: [0, 100],
+    outputRange: ["0%", "100%"],
+  });
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Report Pothole</Text>
       <Text style={styles.subtitle}>Earn 50 credits per report</Text>
 
       <Text style={styles.label}>Photo of Pothole *</Text>
-      <TouchableOpacity
-        style={styles.photoBox}
-        onPress={() => setCameraVisible(true)}
-      >
+      <TouchableOpacity style={styles.photoBox} onPress={() => setCameraVisible(true)}>
         {photo ? (
           <Image source={{ uri: photo }} style={styles.photo} />
         ) : (
@@ -246,35 +229,18 @@ export default function ReportScreen() {
       <Text style={styles.label}>Severity Level *</Text>
       <View style={styles.severityRow}>
         <TouchableOpacity
-          style={[
-            styles.severityButton,
-            severity === 'Medium' && styles.severityMediumActive,
-          ]}
-          onPress={() => setSeverity('Medium')}
+          style={[styles.severityButton, severity === "Medium" && styles.severityMediumActive]}
+          onPress={() => setSeverity("Medium")}
         >
-          <Text
-            style={[
-              styles.severityText,
-              severity === 'Medium' && styles.severityTextActive,
-            ]}
-          >
+          <Text style={[styles.severityText, severity === "Medium" && styles.severityTextActive]}>
             Medium
           </Text>
         </TouchableOpacity>
-
         <TouchableOpacity
-          style={[
-            styles.severityButton,
-            severity === 'Severe' && styles.severitySevereActive,
-          ]}
-          onPress={() => setSeverity('Severe')}
+          style={[styles.severityButton, severity === "Severe" && styles.severitySevereActive]}
+          onPress={() => setSeverity("Severe")}
         >
-          <Text
-            style={[
-              styles.severityText,
-              severity === 'Severe' && styles.severityTextActive,
-            ]}
-          >
+          <Text style={[styles.severityText, severity === "Severe" && styles.severityTextActive]}>
             Severe
           </Text>
         </TouchableOpacity>
@@ -290,17 +256,16 @@ export default function ReportScreen() {
       />
 
       <TouchableOpacity
-        style={styles.submitButton}
+        style={[styles.submitButton, loading ? styles.submitButtonUploading : styles.submitButtonIdle]}
         onPress={handleSubmitReport}
         disabled={loading}
       >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.submitText}>
-            ✓ Submit Report
+        <View style={styles.submitButtonContainer}>
+          {loading && <Animated.View style={[styles.submitButtonProgress, { width: animatedWidth }]} />}
+          <Text style={styles.submitButtonText}>
+            {loading ? `Uploading ${Math.round(progress)}%` : "✓ Submit Report"}
           </Text>
-        )}
+        </View>
       </TouchableOpacity>
 
       <View style={styles.rewardBox}>
@@ -311,104 +276,54 @@ export default function ReportScreen() {
   );
 }
 
-/* ================= STYLES ================= */
 const styles = StyleSheet.create({
-  container: { padding: 20, backgroundColor: '#fff' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  container: { padding: 20, backgroundColor: "#fff", flexGrow: 1 },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  title: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
-  subtitle: { color: '#6b7280', marginBottom: 24 },
+  title: { fontSize: 22, fontWeight: "700", marginBottom: 4, color: "#111827" },
+  subtitle: { color: "#6B7280", marginBottom: 24 },
 
-  label: { fontWeight: '600', marginBottom: 8 },
+  label: { fontWeight: "600", marginBottom: 8, color: "#111827" },
 
   photoBox: {
     height: 140,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#c7d2fe',
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: "#C7D2FE",
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 24,
+    backgroundColor: "#F9FAFB",
   },
+  photo: { width: "100%", height: "100%", borderRadius: 12 },
+  photoText: { marginTop: 6, color: "#4F7DF3", fontWeight: "600" },
 
-  photo: { width: '100%', height: '100%', borderRadius: 12 },
-  photoText: { marginTop: 6, color: '#4F7DF3', fontWeight: '600' },
+  severityRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
+  severityButton: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: "#F3F4F6", alignItems: "center", marginHorizontal: 5 },
+  severityMediumActive: { backgroundColor: "#F59E0B" },
+  severitySevereActive: { backgroundColor: "#EF4444" },
+  severityText: { color: "#6B7280", fontWeight: "600" },
+  severityTextActive: { color: "#fff" },
 
-  severityRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
-  severityButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
-  },
+  textArea: { height: 100, backgroundColor: "#F3F4F6", borderRadius: 10, padding: 12, marginBottom: 28, textAlignVertical: "top" },
 
-  severityMediumActive: { backgroundColor: '#ffa600' },
-  severitySevereActive: { backgroundColor: '#fb0000a6' },
+  submitButton: { height: 50, borderRadius: 12, overflow: "hidden", marginBottom: 20 },
+  submitButtonIdle: { backgroundColor: "#577FEF" },
+  submitButtonUploading: { backgroundColor: "#D1D5DB" },
+  submitButtonContainer: { flex: 1, justifyContent: "center", alignItems: "center", position: "relative", width: "100%" },
+  submitButtonProgress: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: "#577FEF", zIndex: 0 },
+  submitButtonText: { color: "#fff", fontWeight: "700", zIndex: 1 },
 
-  severityText: { color: '#5b5e65', fontWeight: '600' },
-  severityTextActive: { color: '#fff' },
+  rewardBox: { backgroundColor: "#ECFDF5", padding: 16, borderRadius: 12, alignItems: "center" },
+  rewardLabel: { color: "#065F46" },
+  rewardValue: { fontWeight: "800", color: "#057350" },
 
-  textArea: {
-    height: 100,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 28,
-  },
+  topControls: { position: "absolute", top: 50, left: 20, right: 20, flexDirection: "row", justifyContent: "space-between" },
+  cameraBottom: { position: "absolute", bottom: 40, alignSelf: "center" },
+  captureButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#fff", borderWidth: 4, borderColor: "#ddd" },
 
-  submitButton: {
-    backgroundColor: '#577fef',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-
-  submitText: { color: '#fff', fontWeight: '700' },
-
-  rewardBox: {
-    backgroundColor: '#ECFDF5',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-
-  rewardLabel: { color: '#065F46' },
-  rewardValue: { fontWeight: '800', color: '#057350' },
-
-  topControls: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-
-  cameraBottom: {
-    position: 'absolute',
-    bottom: 40,
-    alignSelf: 'center',
-  },
-
-  captureButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#fff',
-    borderWidth: 4,
-    borderColor: '#ddd',
-  },
-
-  previewActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    padding: 16,
-    backgroundColor: '#000',
-  },
-
-  retake: { color: '#f87171', fontSize: 16 },
-  confirm: { color: '#4ade80', fontSize: 16 },
+  previewActions: { flexDirection: "row", justifyContent: "space-around", padding: 16, backgroundColor: "#000" },
+  retake: { color: "#F87171", fontSize: 16 },
+  confirm: { color: "#4ADE80", fontSize: 16 },
 });
