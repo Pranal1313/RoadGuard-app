@@ -79,8 +79,10 @@ export default function ReportScreen() {
     setIsPreview(false);
   };
 
+  // ✅ FIXED AI CALL
   const analyzePothole = async () => {
     if (!photo) return null;
+
     const formData = new FormData();
     formData.append("image", {
       uri: photo,
@@ -96,8 +98,13 @@ export default function ReportScreen() {
           body: formData,
         }
       );
+
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "AI server error");
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI server error");
+      }
+
       return data;
     } catch (error) {
       Alert.alert("AI Error", "Failed to analyze image");
@@ -106,18 +113,33 @@ export default function ReportScreen() {
   };
 
   const handleSubmitReport = async () => {
-    if (!photo) return Alert.alert("Error", "Please take a photo of the pothole");
-    if (!auth.currentUser) return Alert.alert("Error", "You must be logged in");
+    if (!photo)
+      return Alert.alert("Error", "Please take a photo of the pothole");
+
+    if (!auth.currentUser)
+      return Alert.alert("Error", "You must be logged in");
 
     setLoading(true);
     setProgress(0);
 
     const aiResult = await analyzePothole();
-    if (!aiResult) return setLoading(false);
 
-    if (aiResult.class !== "Pothole") {
-      Alert.alert("Invalid Image", "The image does not contain a pothole");
-      return setLoading(false);
+    if (!aiResult) {
+      setLoading(false);
+      return;
+    }
+
+    // ✅ BULLETPROOF VALIDATION
+    const predictedClass = aiResult.class?.trim().toLowerCase();
+    const confidence = aiResult.confidence ?? 1;
+
+    if (predictedClass !== "pothole" || confidence < 0.75) {
+      Alert.alert(
+        "Invalid Image",
+        "This image does not contain a pothole."
+      );
+      setLoading(false);
+      return;
     }
 
     try {
@@ -132,6 +154,7 @@ export default function ReportScreen() {
 
       const fileName = `reports/${auth.currentUser.uid}_${Date.now()}.jpg`;
       const storageRef = ref(storage, fileName);
+
       const uploadTask = uploadBytesResumable(storageRef, blob, {
         contentType: "image/jpeg",
       });
@@ -140,7 +163,8 @@ export default function ReportScreen() {
         uploadTask.on(
           "state_changed",
           (snapshot) => {
-            const percent = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            const percent =
+              (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
             setProgress(percent);
           },
           (error) => reject(error),
@@ -161,6 +185,7 @@ export default function ReportScreen() {
       });
 
       Alert.alert("Success", "AI verified pothole report submitted ✅");
+
       setPhoto(null);
       setDetails("");
       setSeverity("Medium");
@@ -174,7 +199,6 @@ export default function ReportScreen() {
   };
 
   const useCurrentLocation = () => {
-    // TODO: Replace with Expo Location API for real GPS
     setLocation("Current GPS Location");
   };
 
@@ -244,6 +268,7 @@ export default function ReportScreen() {
             Medium
           </Text>
         </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.severityButton, severity === "Severe" && styles.severitySevereActive]}
           onPress={() => setSeverity("Severe")}
@@ -263,7 +288,6 @@ export default function ReportScreen() {
         onChangeText={setDetails}
       />
 
-      {/* LOCATION */}
       <Text style={styles.label}>Location *</Text>
       <View style={styles.locationBox}>
         <Ionicons name="location-outline" size={18} color="#6b7280" />
@@ -367,7 +391,6 @@ const styles = StyleSheet.create({
   retake: { color: "#F87171", fontSize: 16 },
   confirm: { color: "#4ADE80", fontSize: 16 },
 
-  /* LOCATION */
   locationBox: {
     flexDirection: 'row',
     alignItems: 'center',
