@@ -20,18 +20,15 @@ type Report = {
   id: string;
   address: string;
   userId: string;
-  userName: string; // Full name from users collection
+  userName: string;
   status: ReportStatus;
   imageUrl: string;
 };
-
-/* ------------ Admin Screen ------------ */
 
 export default function AdminDashboardScreen() {
   const [activeTab, setActiveTab] = useState<"Dashboard" | "Reports">("Dashboard");
   const [reports, setReports] = useState<Report[]>([]);
 
-  // Fetch all reports and map userId → fullName
   const fetchReports = async () => {
     try {
       const usersSnap = await getDocs(collection(db, "users"));
@@ -47,8 +44,8 @@ export default function AdminDashboardScreen() {
         return {
           id: docSnap.id,
           userId: d.userId,
-          userName: usersMap[d.userId] || "Anonymous", // use fullName
-          address: d.address || "Unknown Location",
+          userName: usersMap[d.userId] || "Anonymous",
+          address: d.location || d.address || "Unknown Location", // ✅ FIXED
           status: d.status || "pending",
           imageUrl: d.imageUrl || "",
         };
@@ -111,8 +108,6 @@ export default function AdminDashboardScreen() {
   );
 }
 
-/* ------------ Components ------------ */
-
 function TabButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <TouchableOpacity style={[styles.tabBtn, active && styles.tabBtnActive]} onPress={onPress}>
@@ -149,14 +144,19 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
 
   return (
     <View style={styles.reportCard}>
-      {report.imageUrl ? <Image source={{ uri: report.imageUrl }} style={styles.reportImage} /> : null}
+      {report.imageUrl ? (
+        <Image source={{ uri: report.imageUrl }} style={styles.reportImage} />
+      ) : null}
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={styles.address}>{report.address}</Text>
         <Text style={styles.name}>Reported by {report.userName}</Text>
         <Text style={styles.statusText}>Status: {report.status.toUpperCase()}</Text>
       </View>
       {report.status === "pending" && (
-        <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#22c55e" }]} onPress={verifyReport}>
+        <TouchableOpacity
+          style={[styles.actionBtn, { backgroundColor: "#22c55e" }]}
+          onPress={verifyReport}
+        >
           <CheckCircle color="white" size={20} />
         </TouchableOpacity>
       )}
@@ -164,11 +164,10 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
   );
 }
 
-/* ------------ Styles ------------ */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F5F7FB" },
   header: {
-    backgroundColor: "#035a1a",
+    backgroundColor: "#78c6a0",
     paddingHorizontal: 20,
     paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 30,
     paddingBottom: 30,
@@ -176,29 +175,39 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   title: { color: "white", fontSize: 20, fontWeight: "700" },
-  subtitle: { color: "#DBEAFE", marginTop: 4 },
-  profile: { backgroundColor: "rgba(255,255,255,0.25)", padding: 12, borderRadius: 999 },
-
+  subtitle: { color: "white", marginTop: 4 },
+  profile: { backgroundColor: "rgba(255, 255, 255, 0.25)", padding: 12, borderRadius: 999 },
   tabContainer: { flexDirection: "row", margin: 20, backgroundColor: "#E5E7EB", borderRadius: 16, overflow: "hidden" },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: "center" },
-  tabBtnActive: { backgroundColor: "#068608" },
-  tabText: { fontWeight: "600", color: "#374151" },
-  tabTextActive: { color: "white" },
-
+  tabBtnActive: { backgroundColor: "#94dcb9" },
+  tabText: { fontWeight: "600", color: "#4a4c50" },
+  tabTextActive: { color: "ash" },
   section: { paddingHorizontal: 20, marginTop: 10 },
   sectionTitle: { fontSize: 16, fontWeight: "600", marginBottom: 12 },
-
   card: { backgroundColor: "white", padding: 16, borderRadius: 18, marginBottom: 14 },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
-  iconBubble: { backgroundColor: "#EFF6FF", padding: 10, borderRadius: 12 },
+  iconBubble: { backgroundColor: "#d7f5e6", padding: 10, borderRadius: 12 },
   cardLabel: { fontWeight: "600" },
   cardValue: { fontSize: 22, fontWeight: "800" },
-
-  reportCard: { backgroundColor: "white", padding: 16, borderRadius: 18, marginBottom: 14, flexDirection: "row", alignItems: "center" },
+  reportCard: {
+    backgroundColor: "white",
+    padding: 16,
+    borderRadius: 18,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+  },
   reportImage: { width: 80, height: 80, borderRadius: 12 },
   address: { fontWeight: "700" },
   name: { color: "#6b7280", marginTop: 4 },
   statusText: { marginTop: 2, color: "#555", fontSize: 12 },
-  actionBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 12 },
+  actionBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 12,
+  },
 });

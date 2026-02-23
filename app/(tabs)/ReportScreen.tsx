@@ -24,6 +24,7 @@ import {
 } from "expo-camera";
 
 import { Ionicons } from "@expo/vector-icons";
+import LocationPickerModal from "../components/LocationPickerModal"; 
 
 export default function ReportScreen() {
   const cameraRef = useRef<CameraView>(null);
@@ -40,7 +41,9 @@ export default function ReportScreen() {
   const [flash, setFlash] = useState<FlashMode>("off");
   const [severity, setSeverity] = useState<"Medium" | "Severe">("Medium");
   const [details, setDetails] = useState("");
-  const [location, setLocation] = useState("Main Street & 5th Avenue, Downtown");
+  const [location, setLocation] = useState("Tap to set location"); // 👈 CHANGED
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null); // 👈 NEW
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false); // 👈 NEW
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -79,7 +82,6 @@ export default function ReportScreen() {
     setIsPreview(false);
   };
 
-  // ✅ FIXED AI CALL
   const analyzePothole = async () => {
     if (!photo) return null;
 
@@ -119,6 +121,10 @@ export default function ReportScreen() {
     if (!auth.currentUser)
       return Alert.alert("Error", "You must be logged in");
 
+    // 👇 NEW: require location to be set
+    if (location === "Tap to set location")
+      return Alert.alert("Error", "Please set a location");
+
     setLoading(true);
     setProgress(0);
 
@@ -129,15 +135,11 @@ export default function ReportScreen() {
       return;
     }
 
-    // ✅ BULLETPROOF VALIDATION
     const predictedClass = aiResult.class?.trim().toLowerCase();
     const confidence = aiResult.confidence ?? 1;
 
     if (predictedClass !== "pothole" || confidence < 0.75) {
-      Alert.alert(
-        "Invalid Image",
-        "This image does not contain a pothole."
-      );
+      Alert.alert("Invalid Image", "This image does not contain a pothole.");
       setLoading(false);
       return;
     }
@@ -180,6 +182,7 @@ export default function ReportScreen() {
         createdAt: serverTimestamp(),
         severity,
         location,
+        coords: coords ?? null, // 👈 NEW: saves lat/lng to Firestore
         status: "pending",
         userId: auth.currentUser.uid,
       });
@@ -190,16 +193,13 @@ export default function ReportScreen() {
       setDetails("");
       setSeverity("Medium");
       setProgress(0);
-      setLocation("Main Street & 5th Avenue, Downtown");
+      setLocation("Tap to set location"); // 👈 CHANGED
+      setCoords(null); // 👈 NEW
     } catch (error: any) {
       Alert.alert("Upload failed: " + error.message);
     }
 
     setLoading(false);
-  };
-
-  const useCurrentLocation = () => {
-    setLocation("Current GPS Location");
   };
 
   if (cameraVisible && !isPreview) {
@@ -288,16 +288,26 @@ export default function ReportScreen() {
         onChangeText={setDetails}
       />
 
+      {/* 👇 REPLACED: old static location box + useCurrentLocation button */}
       <Text style={styles.label}>Location *</Text>
-      <View style={styles.locationBox}>
+      <TouchableOpacity
+        style={styles.locationBox}
+        onPress={() => setLocationPickerVisible(true)}
+      >
         <Ionicons name="location-outline" size={18} color="#6b7280" />
-        <Text style={styles.locationText}>{location}</Text>
-      </View>
-
-      <TouchableOpacity style={styles.useLocation} onPress={useCurrentLocation}>
-        <Ionicons name="navigate" size={16} color="#4F7DF3" />
-        <Text style={styles.useLocationText}>Use Current Location</Text>
+        <Text style={styles.locationText} numberOfLines={1}>{location}</Text>
+        <Ionicons name="chevron-forward" size={16} color="#6b7280" />
       </TouchableOpacity>
+
+      {/* 👇 NEW: Location Picker Modal */}
+      <LocationPickerModal
+        visible={locationPickerVisible}
+        onClose={() => setLocationPickerVisible(false)}
+        onConfirm={(address, c) => {
+          setLocation(address);
+          setCoords(c);
+        }}
+      />
 
       <TouchableOpacity
         style={[styles.submitButton, loading ? styles.submitButtonUploading : styles.submitButtonIdle]}
@@ -324,7 +334,7 @@ const styles = StyleSheet.create({
   container: { padding: 20, backgroundColor: "#fff", flexGrow: 1 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  title: { fontSize: 22, fontWeight: "700", marginBottom: 4, color: "#111827" },
+  title: { fontSize: 22, fontWeight: "700", marginBottom: 4, color: "#3566d0" },
   subtitle: { color: "#6B7280", marginBottom: 24 },
 
   label: { fontWeight: "600", marginBottom: 8, color: "#111827" },
@@ -391,24 +401,15 @@ const styles = StyleSheet.create({
   retake: { color: "#F87171", fontSize: 16 },
   confirm: { color: "#4ADE80", fontSize: 16 },
 
+  // 👇 UPDATED: locationBox now has chevron arrow to indicate it's tappable
   locationBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: "#f3f4f6",
     padding: 14,
     borderRadius: 10,
-    marginBottom: 12,
+    marginBottom: 24, // increased from 12 since useLocation button is removed
   },
-  locationText: { color: '#3c5782' },
-  useLocation: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#f3f4f6',
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 24,
-  },
-  useLocationText: { color: '#4F7DF3', fontWeight: '600' },
+  locationText: { flex: 1, color: "#3c5782" },
 });
