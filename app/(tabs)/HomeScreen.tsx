@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,9 @@ import {
   TrendingUp,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { useFocusEffect } from '@react-navigation/native';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../../firebaseConfig';
 import StatsCard from '../components/StatsCard';
 import MapPreview from '../components/MapPreview';
@@ -28,6 +30,7 @@ type Report = {
   imageUrl: string;
   location: string;
   status: string;
+  createdAt?: number;
 };
 
 export default function HomeScreen() {
@@ -35,53 +38,59 @@ export default function HomeScreen() {
   const [credits, setCredits] = useState(0);
   const [reports, setReports] = useState<Report[]>([]);
 
-  /* ---------- Load User Credits ---------- */
-  useEffect(() => {
-    const fetchUserCredits = async () => {
-      const user = auth.currentUser;
+  const loadData = () => {
+    // ✅ Wait for Firebase auth to be ready before querying
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      unsubscribe(); // only need it once
       if (!user) return;
 
+      // Fetch credits
       try {
         const userDocRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userDocRef);
-
         if (userSnap.exists()) {
           setCredits(userSnap.data()?.credits || 0);
         }
       } catch (err) {
-        console.error('Failed to load user credits', err);
+        console.error('Failed to load credits', err);
       }
-    };
 
-    fetchUserCredits();
-  }, []);
-
-  /* ---------- Load Recent Reports (Limit 2) ---------- */
-  useEffect(() => {
-    const fetchReports = async () => {
+      // Fetch this user's reports only
       try {
-        const reportsRef = collection(db, 'reports');
-        const q = query(reportsRef, orderBy('createdAt', 'desc'), limit(2)); // Only 2 latest
+        const q = query(
+          collection(db, 'reports'),
+          where('userId', '==', user.uid)
+        );
         const snapshot = await getDocs(q);
-
         const loaded: Report[] = snapshot.docs.map((docSnap) => {
           const data = docSnap.data() as any;
           return {
             id: docSnap.id,
             imageUrl: data.imageUrl || '',
-            location: data.address || 'Unknown Location',
+            location: data.location || data.address || 'Unknown Location',
             status: data.status || 'pending',
+            createdAt: data.createdAt?.toMillis?.() ?? 0,
           };
         });
 
-        setReports(loaded);
+        // Sort newest first, show only 2
+        const sorted = loaded
+          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+          .slice(0, 2);
+
+        setReports(sorted);
       } catch (err) {
         console.error('Failed to fetch reports', err);
       }
-    };
+    });
+  };
 
-    fetchReports();
-  }, []);
+  // Reload every time screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      loadData();
+    }, [])
+  );
 
   return (
     <View style={styles.safe}>
@@ -109,7 +118,6 @@ export default function HomeScreen() {
                 <Award color="white" size={28} />
               </View>
             </View>
-
             <View style={styles.divider} />
             <Text style={styles.redeemText}>Redeemable for highway tolls</Text>
           </View>
@@ -119,7 +127,7 @@ export default function HomeScreen() {
         <View style={styles.statsRow}>
           <StatsCard
             icon={<MapPin color="#2563EB" size={20} />}
-            label="Total Reports"
+            label="My Reports"
             value={reports.length}
           />
           <StatsCard
@@ -148,14 +156,14 @@ export default function HomeScreen() {
         </View>
 
         {/* Recent Reports */}
-        <View style={styles.section}>
+        <View style={[styles.section, { marginBottom: 30 }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Reports</Text>
+            <Text style={styles.sectionTitle}>My Recent Reports</Text>
           </View>
 
           {reports.length === 0 ? (
             <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>
-              No reports submitted yet.
+              You have not submitted any reports yet.
             </Text>
           ) : (
             reports.map((report) => (
@@ -188,10 +196,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 19,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 23,
     paddingBottom: 28,
-    borderBottomLeftRadius: 22,
-    borderBottomRightRadius: 22,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
+    borderRadius: 22,
   },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },

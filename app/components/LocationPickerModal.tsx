@@ -33,8 +33,9 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
   const [marker, setMarker] = useState<{ lat: number; lng: number } | null>(null);
   const [address, setAddress] = useState("");
   const [loadingLocation, setLoadingLocation] = useState(false);
+  const [loadingAddress, setLoadingAddress] = useState(false);
 
-  // Auto-fetch when modal opens
+  // Auto-fetch current location when modal opens
   useEffect(() => {
     if (visible) {
       fetchCurrentLocation();
@@ -61,23 +62,38 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
       const lat = loc.coords.latitude;
       const lng = loc.coords.longitude;
       setMarker({ lat, lng });
-
-      // Google Geocoding API for precise street-level address
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`
-      );
-      const data = await response.json();
-
-      if (data.status === "OK" && data.results.length > 0) {
-        setAddress(data.results[0].formatted_address);
-      } else {
-        setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
-      }
+      await reverseGeocode(lat, lng);
     } catch (error) {
       alert("Could not fetch location. Please try again.");
     }
 
     setLoadingLocation(false);
+  };
+
+  // ✅ Shared reverse geocode function used by both GPS and map tap
+  const reverseGeocode = async (lat: number, lng: number) => {
+    setLoadingAddress(true);
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`
+      );
+      const data = await response.json();
+      if (data.status === "OK" && data.results.length > 0) {
+        setAddress(data.results[0].formatted_address);
+      } else {
+        setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+      }
+    } catch {
+      setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    }
+    setLoadingAddress(false);
+  };
+
+  // ✅ Tap anywhere on map to move marker and get address
+  const handleMapPress = async (e: any) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    setMarker({ lat: latitude, lng: longitude });
+    await reverseGeocode(latitude, longitude);
   };
 
   return (
@@ -92,7 +108,7 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
           </TouchableOpacity>
         </View>
 
-        {/* Map — scrollable/zoomable but marker stays fixed to GPS location */}
+        {/* Map */}
         {Platform.OS !== "web" && MapView && marker ? (
           <MapView
             provider={PROVIDER_GOOGLE}
@@ -103,17 +119,16 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
               latitudeDelta: 0.003,
               longitudeDelta: 0.003,
             }}
-            // ✅ scrollEnabled & zoomEnabled = true so user can explore
-            // but we do NOT update marker on press — location stays fixed
             scrollEnabled={true}
             zoomEnabled={true}
             rotateEnabled={true}
             pitchEnabled={false}
+            onPress={handleMapPress} // ✅ tap anywhere to move pin
           >
             {Marker && (
               <Marker
                 coordinate={{ latitude: marker.lat, longitude: marker.lng }}
-                title="Your Location"
+                title="Selected Location"
                 description={address}
               />
             )}
@@ -138,12 +153,25 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
           </View>
         )}
 
+        {/* Hint */}
+        {marker && !loadingLocation && (
+          <View style={styles.hintBox}>
+            <Ionicons name="information-circle-outline" size={16} color="#6B7280" />
+            <Text style={styles.hintText}>Tap anywhere on the map to move the pin</Text>
+          </View>
+        )}
+
         {/* Location Info Box */}
         <View style={styles.infoBox}>
           {loadingLocation ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator size="small" color="#4F7DF3" />
               <Text style={styles.loadingText}>Detecting your location...</Text>
+            </View>
+          ) : loadingAddress ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color="#4F7DF3" />
+              <Text style={styles.loadingText}>Getting address...</Text>
             </View>
           ) : address ? (
             <View style={styles.addressRow}>
@@ -157,7 +185,6 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
 
         {/* Buttons */}
         <View style={styles.actions}>
-          {/* Use Current Location — same size and padding as the two buttons below */}
           <TouchableOpacity
             style={styles.currentLocationBtn}
             onPress={fetchCurrentLocation}
@@ -173,7 +200,6 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
             </Text>
           </TouchableOpacity>
 
-          {/* Cancel & Confirm */}
           <View style={styles.bottomRow}>
             <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
               <Text style={styles.cancelText}>Cancel</Text>
@@ -181,7 +207,7 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
             <TouchableOpacity
               style={[
                 styles.confirmBtn,
-                (!address || loadingLocation) && styles.confirmBtnDisabled,
+                (!address || loadingLocation || loadingAddress) && styles.confirmBtnDisabled,
               ]}
               onPress={() => {
                 if (!address || !marker)
@@ -189,7 +215,7 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
                 onConfirm(address, marker);
                 onClose();
               }}
-              disabled={!address || loadingLocation}
+              disabled={!address || loadingLocation || loadingAddress}
             >
               <Text style={styles.confirmText}>Confirm Location</Text>
             </TouchableOpacity>
@@ -215,10 +241,10 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 22, fontWeight: "700", color: "#457edf" },
 
-  map: { height: 520 },
+  map: { height: 420 },
 
   mapPlaceholder: {
-    flex: 1,
+    height: 420,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#F9FAFB",
@@ -229,6 +255,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: "center",
   },
+
+  hintBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: "#F9FAFB",
+    borderBottomWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  hintText: { color: "#6B7280", fontSize: 12 },
 
   infoBox: {
     padding: 16,
@@ -261,14 +299,12 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
 
-  // ✅ Full width, centered, same padding as cancel/confirm
   currentLocationBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -10,   
     gap: 8,
-    padding: 10,
+    padding: 13,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: "#80a3f9",

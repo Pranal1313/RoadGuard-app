@@ -1,20 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  StatusBar,
-  Platform,
-  TouchableOpacity,
-  Image,
-  Alert,
+  View, Text, StyleSheet, ScrollView, StatusBar, Platform,
+  TouchableOpacity, Image, Alert, Modal, Dimensions,
 } from "react-native";
-import { User, MapPin, AlertCircle, CheckCircle } from "lucide-react-native";
-import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
+import { User, MapPin, AlertCircle, CheckCircle, Flame, XCircle, X, Wrench } from "lucide-react-native";
+import {
+  collection, getDocs, doc, updateDoc, query, orderBy, getDoc, setDoc, where,
+} from "firebase/firestore";
 import { db } from "../../firebaseConfig";
 
-type ReportStatus = "pending" | "verified";
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+
+type ReportStatus = "pending" | "verified" | "rejected";
+type ReportFilter = "all" | "pending" | "verified" | "rejected" | "multiuser" | "repair";
 
 type Report = {
   id: string;
@@ -23,33 +21,77 @@ type Report = {
   userName: string;
   status: ReportStatus;
   imageUrl: string;
+  creditEligible: boolean;
+  creditsAwarded: boolean;
+  corroborationCount: number;
+  corroboratedBy: string[];
+  corroboratorNames: string[];
+  corroboratorImages: string[];
+  isCorroboration: boolean;
+  repairVerificationPending: boolean;
+  repairedClosed: boolean;
+  repairVerifiedAt?: string;
 };
+
+function ImageViewerModal({ visible, imageUrl, onClose }: {
+  visible: boolean; imageUrl: string; onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+          <X size={26} color="white" />
+        </TouchableOpacity>
+        <Image source={{ uri: imageUrl }} style={styles.fullImage} resizeMode="contain" />
+      </View>
+    </Modal>
+  );
+}
 
 export default function AdminDashboardScreen() {
   const [activeTab, setActiveTab] = useState<"Dashboard" | "Reports">("Dashboard");
+  const [activeFilter, setActiveFilter] = useState<ReportFilter>("all");
   const [reports, setReports] = useState<Report[]>([]);
 
   const fetchReports = async () => {
     try {
       const usersSnap = await getDocs(collection(db, "users"));
       const usersMap: Record<string, string> = {};
-      usersSnap.docs.forEach((doc) => {
-        const data = doc.data() as any;
-        usersMap[doc.id] = data.fullName || "Unknown";
+      usersSnap.docs.forEach((d) => {
+        const data = d.data() as any;
+        usersMap[d.id] = data.fullName || "Unknown";
       });
 
-      const reportsSnap = await getDocs(collection(db, "reports"));
-      const loaded: Report[] = reportsSnap.docs.map((docSnap) => {
-        const d = docSnap.data() as any;
-        return {
-          id: docSnap.id,
-          userId: d.userId,
-          userName: usersMap[d.userId] || "Anonymous",
-          address: d.location || d.address || "Unknown Location", // ✅ FIXED
-          status: d.status || "pending",
-          imageUrl: d.imageUrl || "",
-        };
-      });
+      const reportsSnap = await getDocs(
+        query(collection(db, "reports"), orderBy("createdAt", "asc"))
+      );
+
+      const loaded: Report[] = reportsSnap.docs
+        .map((docSnap) => {
+          const d = docSnap.data() as any;
+          const corroboratedBy: string[] = d.corroboratedBy && d.corroboratedBy.length > 0
+            ? d.corroboratedBy : [d.userId];
+          const corroboratorNames = corroboratedBy.map((uid: string) => usersMap[uid] || "Unknown User");
+          return {
+            id: docSnap.id,
+            userId: d.userId,
+            userName: usersMap[d.userId] || "Anonymous",
+            address: d.location || d.address || "Unknown Location",
+            status: d.status || "pending",
+            imageUrl: d.imageUrl || "",
+            creditEligible: d.creditEligible ?? true,
+            creditsAwarded: d.creditsAwarded ?? false,
+            corroborationCount: d.corroborationCount ?? 1,
+            corroboratedBy,
+            corroboratorNames,
+            corroboratorImages: d.corroboratorImages ?? [],
+            isCorroboration: d.isCorroboration ?? false,
+            repairVerificationPending: d.repairVerificationPending ?? false,
+            repairedClosed: d.repairedClosed ?? false,
+            repairVerifiedAt: d.repairVerifiedAt,
+          };
+        })
+        .filter((r) => !r.isCorroboration);
 
       setReports(loaded);
     } catch (err) {
@@ -58,23 +100,46 @@ export default function AdminDashboardScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchReports();
-  }, []);
+  useEffect(() => { fetchReports(); }, []);
 
   const total = reports.length;
   const pending = reports.filter((r) => r.status === "pending").length;
   const verified = reports.filter((r) => r.status === "verified").length;
+  const rejected = reports.filter((r) => r.status === "rejected").length;
+  const multi = reports.filter((r) => r.corroborationCount >= 2).length;
+  // Repair requests: reporter said it's fixed, admin hasn't closed yet
+  const repairPending = reports.filter((r) => r.repairVerificationPending && !r.repairedClosed).length;
+
+  const goToReports = (filter: ReportFilter) => {
+    setActiveFilter(filter);
+    setActiveTab("Reports");
+  };
+
+  const filteredReports = reports.filter((r) => {
+    if (activeFilter === "all") return true;
+    if (activeFilter === "multiuser") return r.corroborationCount >= 2;
+    if (activeFilter === "repair") return r.repairVerificationPending && !r.repairedClosed;
+    return r.status === activeFilter;
+  });
+
+  const filterLabel: Record<ReportFilter, string> = {
+    all: "All Reports",
+    pending: "Pending Reports",
+    verified: "Verified Reports",
+    rejected: "Rejected Reports",
+    multiuser: "Multi-User Reports 👥",
+    repair: "Repair Requests 🔧",
+  };
 
   return (
     <View style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* HEADER */}
+
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.title}>RoadGuard Admin</Text>
-              <Text style={styles.subtitle}>Management Dashboard</Text>
+              <Text style={styles.subtitle}>Executive Management Panel</Text>
             </View>
             <View style={styles.profile}>
               <User color="white" size={22} />
@@ -82,25 +147,56 @@ export default function AdminDashboardScreen() {
           </View>
         </View>
 
-        {/* TABS */}
         <View style={styles.tabContainer}>
           <TabButton label="Dashboard" active={activeTab === "Dashboard"} onPress={() => setActiveTab("Dashboard")} />
           <TabButton label="Reports" active={activeTab === "Reports"} onPress={() => setActiveTab("Reports")} />
         </View>
 
-        {/* CONTENT */}
         {activeTab === "Dashboard" ? (
           <View style={styles.section}>
-            <DashboardCard icon={<MapPin color="#2563EB" size={22} />} label="Total Reports" value={total} />
-            <DashboardCard icon={<AlertCircle color="#F59E0B" size={22} />} label="Pending Reports" value={pending} />
-            <DashboardCard icon={<CheckCircle color="#16A34A" size={22} />} label="Verified Reports" value={verified} />
+            {/* 🔧 Repair requests card — shown first if there are any */}
+            {repairPending > 0 && (
+              <DashboardCard
+                icon={<Wrench color="#92400E" size={13} />}
+                label="Repair Requests 🔧"
+                value={repairPending}
+                color="#FEF3C7"
+                onPress={() => goToReports("repair")}
+              />
+            )}
+            <DashboardCard icon={<Flame color="#C2410C" size={13} />} label="Multi-User Reports  👥" value={multi} color="#e7f7ec" onPress={() => goToReports("multiuser")} />
+            <DashboardCard icon={<MapPin color="#065F46" size={13} />} label="Total Reports" value={total} color="#e7f7ec" onPress={() => goToReports("all")} />
+            <DashboardCard icon={<AlertCircle color="#065F46" size={13} />} label="Pending Reports" value={pending} color="#e7f7ec" onPress={() => goToReports("pending")} />
+            <DashboardCard icon={<CheckCircle color="#065F46" size={13} />} label="Verified Reports" value={verified} color="#e7f7ec" onPress={() => goToReports("verified")} />
+            <DashboardCard icon={<XCircle color="#991B1B" size={13} />} label="Rejected Reports" value={rejected} color="#FEE2E2" onPress={() => goToReports("rejected")} />
           </View>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>All Reports</Text>
-            {reports.map((report) => (
-              <ReportCard key={report.id} report={report} refresh={fetchReports} />
-            ))}
+            <Text style={styles.sectionTitle}>{filterLabel[activeFilter]}</Text>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+              {(["multiuser", "all", "pending", "verified", "rejected", "repair"] as ReportFilter[]).map((f) => (
+                <TouchableOpacity
+                  key={f}
+                  style={[styles.filterChip, activeFilter === f && styles.filterChipActive]}
+                  onPress={() => setActiveFilter(f)}
+                >
+                  <Text style={[styles.filterChipText, activeFilter === f && styles.filterChipTextActive]}>
+                    {f === "multiuser" ? "👥 Multi-User"
+                      : f === "repair" ? "🔧 Repair"
+                      : f.charAt(0).toUpperCase() + f.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {filteredReports.length === 0 ? (
+              <Text style={styles.emptyText}>No {filterLabel[activeFilter].toLowerCase()} found.</Text>
+            ) : (
+              filteredReports.map((report) => (
+                <ReportCard key={report.id} report={report} refresh={fetchReports} />
+              ))
+            )}
           </View>
         )}
       </ScrollView>
@@ -116,9 +212,9 @@ function TabButton({ label, active, onPress }: { label: string; active: boolean;
   );
 }
 
-function DashboardCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+function DashboardCard({ icon, label, value, color, onPress }: any) {
   return (
-    <View style={styles.card}>
+    <TouchableOpacity style={[styles.card, { backgroundColor: color }]} onPress={onPress} activeOpacity={0.9}>
       <View style={styles.rowBetween}>
         <View style={styles.row}>
           <View style={styles.iconBubble}>{icon}</View>
@@ -126,88 +222,268 @@ function DashboardCard({ icon, label, value }: { icon: React.ReactNode; label: s
         </View>
         <Text style={styles.cardValue}>{value}</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
 function ReportCard({ report, refresh }: { report: Report; refresh: () => void }) {
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerImage, setViewerImage] = useState("");
+
+  const openImage = (url: string) => { setViewerImage(url); setViewerVisible(true); };
+
   const verifyReport = async () => {
-    try {
-      await updateDoc(doc(db, "reports", report.id), { status: "verified" });
-      Alert.alert("Verified", "Report marked as verified");
-      refresh();
-    } catch (err) {
-      Alert.alert("Error", "Could not verify report");
-      console.error(err);
-    }
+    Alert.alert("Verify Report", `Award 50 credits to ${report.corroboratorNames.length} reporter(s)?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Verify",
+        onPress: async () => {
+          try {
+            await updateDoc(doc(db, "reports", report.id), { status: "verified" });
+            const corrobSnap = await getDocs(query(collection(db, "reports"), where("originalReportId", "==", report.id)));
+            for (const c of corrobSnap.docs) await updateDoc(doc(db, "reports", c.id), { status: "verified" });
+            const allUserIds = Array.from(new Set(report.corroboratedBy));
+            if (allUserIds.length === 0) allUserIds.push(report.userId);
+            let count = 0;
+            for (const uid of allUserIds) {
+              const userRef = doc(db, "users", uid);
+              const userSnap = await getDoc(userRef);
+              if (userSnap.exists()) {
+                await updateDoc(userRef, { credits: (userSnap.data()?.credits ?? 0) + 50 });
+              } else {
+                await setDoc(userRef, { credits: 50 }, { merge: true });
+              }
+              count++;
+            }
+            await updateDoc(doc(db, "reports", report.id), { creditsAwarded: true });
+            for (const c of corrobSnap.docs) await updateDoc(doc(db, "reports", c.id), { creditsAwarded: true });
+            Alert.alert("Verified ✅", `50 credits awarded to ${count} reporter${count > 1 ? "s" : ""}:\n${report.corroboratorNames.join(", ")}`);
+            refresh();
+          } catch (err: any) { Alert.alert("Error", err.message); }
+        },
+      },
+    ]);
   };
 
+  const rejectReport = async () => {
+    Alert.alert("Reject Report", "Mark as fake/invalid? No credits will be awarded.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Reject", style: "destructive",
+        onPress: async () => {
+          try {
+            await updateDoc(doc(db, "reports", report.id), { status: "rejected" });
+            const corrobSnap = await getDocs(query(collection(db, "reports"), where("originalReportId", "==", report.id)));
+            for (const c of corrobSnap.docs) await updateDoc(doc(db, "reports", c.id), { status: "rejected" });
+            Alert.alert("Rejected ❌", "Report rejected. No credits awarded.");
+            refresh();
+          } catch (err: any) { Alert.alert("Error", err.message); }
+        },
+      },
+    ]);
+  };
+
+  // ✅ Admin closes the repair — pothole gets repairedClosed=true → disappears from map
+  const closeRepairReport = async () => {
+    Alert.alert(
+      "Close Repair Report 🔧",
+      `The reporter confirmed this pothole at "${report.address}" is fixed.\n\nClose this report? It will be removed from the active map.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Close Report ✅",
+          onPress: async () => {
+            try {
+              await updateDoc(doc(db, "reports", report.id), {
+                repairedClosed: true,
+                repairedClosedAt: new Date().toISOString(),
+                repairVerificationPending: false,
+              });
+              // Also close any corroboration sub-reports
+              const corrobSnap = await getDocs(query(collection(db, "reports"), where("originalReportId", "==", report.id)));
+              for (const c of corrobSnap.docs) {
+                await updateDoc(doc(db, "reports", c.id), { repairedClosed: true });
+              }
+              Alert.alert("Closed ✅", "Report officially closed. Pothole removed from the active map.");
+              refresh();
+            } catch (err: any) { Alert.alert("Error", err.message); }
+          },
+        },
+      ]
+    );
+  };
+
+  const isHighPriority = report.corroborationCount >= 2;
+  const isPending = report.status === "pending";
+  const isRejected = report.status === "rejected";
+  const allNames = report.corroboratorNames.length > 0 ? report.corroboratorNames : [report.userName];
+
   return (
-    <View style={styles.reportCard}>
+    <View style={[
+      styles.reportCard,
+      isHighPriority && isPending && styles.reportCardHighPriority,
+      isRejected && styles.reportCardRejected,
+      report.repairVerificationPending && !report.repairedClosed && styles.reportCardRepair,
+    ]}>
+      <ImageViewerModal visible={viewerVisible} imageUrl={viewerImage} onClose={() => setViewerVisible(false)} />
+
       {report.imageUrl ? (
-        <Image source={{ uri: report.imageUrl }} style={styles.reportImage} />
-      ) : null}
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={styles.address}>{report.address}</Text>
-        <Text style={styles.name}>Reported by {report.userName}</Text>
-        <Text style={styles.statusText}>Status: {report.status.toUpperCase()}</Text>
-      </View>
-      {report.status === "pending" && (
-        <TouchableOpacity
-          style={[styles.actionBtn, { backgroundColor: "#22c55e" }]}
-          onPress={verifyReport}
-        >
-          <CheckCircle color="white" size={20} />
+        <TouchableOpacity onPress={() => openImage(report.imageUrl)} activeOpacity={0.85}>
+          <Image source={{ uri: report.imageUrl }} style={styles.reportImage} />
+          <View style={styles.zoomHint}><Text style={styles.zoomHintText}>🔍</Text></View>
         </TouchableOpacity>
-      )}
+      ) : null}
+
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={styles.address} numberOfLines={2}>{report.address}</Text>
+
+        <View style={styles.reportersBox}>
+          <Text style={styles.reportersLabel}>Reported by ({allNames.length}):</Text>
+          {allNames.map((name, i) => <Text key={i} style={styles.reporterName}>👤 {name}</Text>)}
+        </View>
+
+        <Text style={[styles.statusText,
+          report.status === "verified" && styles.statusVerified,
+          report.status === "rejected" && styles.statusRejected,
+        ]}>
+          Status: {report.status.toUpperCase()}
+        </Text>
+
+        {isHighPriority && (
+          <View style={styles.corrobBadge}>
+            <Text style={styles.corrobText}>👥 {report.corroborationCount} users reported this</Text>
+          </View>
+        )}
+
+        {/* 🔧 Repair request banner */}
+        {report.repairVerificationPending && !report.repairedClosed && (
+          <View style={styles.repairBadge}>
+            <Text style={styles.repairBadgeText}>🔧 Reporter says this is fixed!</Text>
+            {report.repairVerifiedAt && (
+              <Text style={styles.repairTime}>
+                Reported at: {new Date(report.repairVerifiedAt).toLocaleString()}
+              </Text>
+            )}
+          </View>
+        )}
+
+        {report.repairedClosed && (
+          <View style={styles.closedBadge}>
+            <Text style={styles.closedBadgeText}>✅ Officially Closed — Removed from map</Text>
+          </View>
+        )}
+
+        {report.corroboratorImages?.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+            {report.corroboratorImages.map((imgUrl, i) => (
+              <TouchableOpacity key={i} onPress={() => openImage(imgUrl)} activeOpacity={0.8}>
+                <Image source={{ uri: imgUrl }} style={styles.corrobThumb} />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        <Text style={[styles.creditBadge,
+          report.creditsAwarded ? styles.creditAwarded : isRejected ? styles.creditRejected : styles.creditYes
+        ]}>
+          {report.creditsAwarded
+            ? `✓ 50 Credits awarded to all ${allNames.length} reporter${allNames.length > 1 ? "s" : ""}`
+            : isRejected ? "✗ Rejected — no credits awarded"
+            : `⭐ 50 Credits pending for ${allNames.length} reporter${allNames.length > 1 ? "s" : ""}`}
+        </Text>
+      </View>
+
+      {/* Action buttons column */}
+      <View style={styles.actionButtons}>
+        {isPending && (
+          <>
+            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#22c55e" }]} onPress={verifyReport}>
+              <CheckCircle color="white" size={20} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#EF4444", marginTop: 8 }]} onPress={rejectReport}>
+              <XCircle color="white" size={20} />
+            </TouchableOpacity>
+          </>
+        )}
+        {/* 🔧 Close Repair button — shown when reporter verified it's fixed */}
+        {report.repairVerificationPending && !report.repairedClosed && (
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: "#D97706", marginTop: isPending ? 8 : 0 }]}
+            onPress={closeRepairReport}
+          >
+            <Wrench color="white" size={20} />
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F5F7FB" },
+  safe: { flex: 1, backgroundColor: "#F1F5F9" },
   header: {
-    backgroundColor: "#78c6a0",
+    backgroundColor: "#064E3B",
     paddingHorizontal: 20,
     paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 30,
     paddingBottom: 30,
-    borderRadius: 24,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  title: { color: "white", fontSize: 20, fontWeight: "700" },
-  subtitle: { color: "white", marginTop: 4 },
-  profile: { backgroundColor: "rgba(255, 255, 255, 0.25)", padding: 12, borderRadius: 999 },
-  tabContainer: { flexDirection: "row", margin: 20, backgroundColor: "#E5E7EB", borderRadius: 16, overflow: "hidden" },
+  title: { color: "white", fontSize: 22, fontWeight: "800" },
+  subtitle: { color: "#A7F3D0", marginTop: 4 },
+  profile: { backgroundColor: "rgba(255,255,255,0.2)", padding: 12, borderRadius: 999 },
+  tabContainer: { flexDirection: "row", margin: 20, backgroundColor: "#E2E8F0", borderRadius: 16 },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: "center" },
-  tabBtnActive: { backgroundColor: "#94dcb9" },
-  tabText: { fontWeight: "600", color: "#4a4c50" },
-  tabTextActive: { color: "ash" },
-  section: { paddingHorizontal: 20, marginTop: 10 },
-  sectionTitle: { fontSize: 16, fontWeight: "600", marginBottom: 12 },
-  card: { backgroundColor: "white", padding: 16, borderRadius: 18, marginBottom: 14 },
+  tabBtnActive: { backgroundColor: "#10ad79", borderRadius: 16 },
+  tabText: { fontWeight: "600", color: "#475569" },
+  tabTextActive: { color: "white" },
+  section: { paddingHorizontal: 20, marginTop: 0 },
+  card: {
+    padding: 15, borderRadius: 18, marginBottom: 16,
+    shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 }, elevation: 6,
+  },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
-  iconBubble: { backgroundColor: "#d7f5e6", padding: 10, borderRadius: 12 },
-  cardLabel: { fontWeight: "600" },
-  cardValue: { fontSize: 22, fontWeight: "800" },
-  reportCard: {
-    backgroundColor: "white",
-    padding: 16,
-    borderRadius: 18,
-    marginBottom: 14,
-    flexDirection: "row",
-    alignItems: "center",
-  },
+  iconBubble: { backgroundColor: "rgba(0,0,0,0.06)", padding: 14, borderRadius: 14 },
+  cardLabel: { fontWeight: "700", color: "#0F172A" },
+  cardValue: { fontSize: 24, fontWeight: "900", color: "#111827" },
+  sectionTitle: { fontSize: 16, fontWeight: "700", marginBottom: 12, color: "#111827" },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: "#E2E8F0", marginRight: 8 },
+  filterChipActive: { backgroundColor: "#10B981" },
+  filterChipText: { fontSize: 13, fontWeight: "600", color: "#475569" },
+  filterChipTextActive: { color: "white" },
+  emptyText: { color: "#9CA3AF", fontStyle: "italic", textAlign: "center", marginTop: 40 },
+  reportCard: { backgroundColor: "white", padding: 16, borderRadius: 18, marginBottom: 14, flexDirection: "row", alignItems: "flex-start" },
+  reportCardHighPriority: { borderWidth: 1.5, borderColor: "#FCA5A5", backgroundColor: "#FFF7F7" },
+  reportCardRejected: { borderWidth: 1.5, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB", opacity: 0.7 },
+  reportCardRepair: { borderWidth: 1.5, borderColor: "#FCD34D", backgroundColor: "#FFFBEB" },
   reportImage: { width: 80, height: 80, borderRadius: 12 },
-  address: { fontWeight: "700" },
-  name: { color: "#6b7280", marginTop: 4 },
-  statusText: { marginTop: 2, color: "#555", fontSize: 12 },
-  actionBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 12,
-  },
+  zoomHint: { position: "absolute", bottom: 4, right: 4, backgroundColor: "rgba(0,0,0,0.45)", borderRadius: 6, paddingHorizontal: 4, paddingVertical: 1 },
+  zoomHintText: { fontSize: 11 },
+  address: { fontWeight: "700", fontSize: 13 },
+  reportersBox: { marginTop: 4, marginBottom: 2 },
+  reportersLabel: { fontSize: 11, color: "#6b7280", fontWeight: "600", marginBottom: 2 },
+  reporterName: { fontSize: 12, color: "#111827", fontWeight: "500", marginTop: 2 },
+  statusText: { marginTop: 4, color: "#555", fontSize: 12, fontWeight: "600" },
+  statusVerified: { color: "#16A34A" },
+  statusRejected: { color: "#DC2626" },
+  corrobBadge: { marginTop: 6, backgroundColor: "#FEE2E2", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, alignSelf: "flex-start" },
+  corrobText: { fontSize: 11, fontWeight: "700", color: "#DC2626" },
+  repairBadge: { marginTop: 6, backgroundColor: "#FEF3C7", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, borderWidth: 1, borderColor: "#FCD34D" },
+  repairBadgeText: { fontSize: 11, fontWeight: "700", color: "#92400E" },
+  repairTime: { fontSize: 10, color: "#92400E", marginTop: 2 },
+  closedBadge: { marginTop: 6, backgroundColor: "#DCFCE7", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  closedBadgeText: { fontSize: 11, fontWeight: "700", color: "#15803D" },
+  corrobThumb: { width: 40, height: 40, borderRadius: 6, marginRight: 6, borderWidth: 1, borderColor: "#E5E7EB" },
+  creditBadge: { marginTop: 6, fontSize: 11, fontWeight: "600" },
+  creditAwarded: { color: "#059669" },
+  creditYes: { color: "#D97706" },
+  creditRejected: { color: "#9CA3AF" },
+  actionButtons: { flexDirection: "column", alignItems: "center", marginLeft: 10 },
+  actionBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", justifyContent: "center", alignItems: "center" },
+  closeBtn: { position: "absolute", top: 60, right: 20, zIndex: 10 },
+  fullImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },
 });

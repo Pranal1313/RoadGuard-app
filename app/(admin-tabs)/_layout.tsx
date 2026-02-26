@@ -41,7 +41,7 @@ export default function AdminTabsLayout() {
   return (
     <Tabs screenOptions={{ headerShown: true }}>
       <Tabs.Screen name="HomeScreen" options={{ title: 'Admin Home' }} />
-      <Tabs.Screen name="AdminScreen" options={{ title: 'Manage Reports' }} />
+      <Tabs.Screen name="ManageReports" options={{ title: 'Manage Reports' }} />
     </Tabs>
   );
 }

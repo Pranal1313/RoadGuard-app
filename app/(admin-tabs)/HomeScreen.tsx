@@ -8,16 +8,20 @@ import {
   StatusBar,
   Platform,
   Image,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import {
   Menu,
-  Bell,
   MapPin,
   TrendingUp,
+  LogOut,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useFocusEffect } from '@react-navigation/native';
+import { collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
+import { auth, db } from '../../firebaseConfig';
 import StatsCard from '../components/StatsCard';
 import MapPreview from '../components/MapPreview';
 
@@ -26,37 +30,72 @@ type Report = {
   imageUrl: string;
   location: string;
   status: string;
+  createdAt?: number;
+  isCorroboration?: boolean;
 };
 
 export default function AdminHomeScreen() {
   const router = useRouter();
   const [reports, setReports] = useState<Report[]>([]);
+  const [recentReports, setRecentReports] = useState<Report[]>([]);
 
-  useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const reportsRef = collection(db, 'reports');
-        const q = query(reportsRef, orderBy('createdAt', 'desc'), limit(2));
-        const snapshot = await getDocs(q);
+  const fetchReports = async () => {
+    try {
+      // ✅ Fetch ALL reports for accurate counts (no limit)
+      const allSnap = await getDocs(collection(db, 'reports'));
+      const allLoaded: Report[] = allSnap.docs.map((docSnap) => {
+        const data = docSnap.data() as any;
+        return {
+          id: docSnap.id,
+          imageUrl: data.imageUrl || '',
+          location: data.location || data.address || 'Unknown Location',
+          status: data.status || 'pending',
+          createdAt: data.createdAt?.toMillis?.() ?? 0,
+          isCorroboration: data.isCorroboration ?? false,
+        };
+      });
 
-        const loaded: Report[] = snapshot.docs.map((docSnap) => {
-          const data = docSnap.data() as any;
-          return {
-            id: docSnap.id,
-            imageUrl: data.imageUrl || '',
-            location: data.location || data.address || 'Unknown Location',
-            status: data.status || 'pending',
-          };
-        });
+      // ✅ For stats: only count primary (non-corroboration) reports
+      const primaryReports = allLoaded.filter((r) => r.isCorroboration !== true);
+      setReports(primaryReports);
 
-        setReports(loaded);
-      } catch (err) {
-        console.error('Failed to fetch reports', err);
-      }
-    };
+      // ✅ For "Recent Reports" section: show latest 2 primary reports
+      const recent = [...primaryReports]
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+        .slice(0, 2);
+      setRecentReports(recent);
+    } catch (err) {
+      console.error('Failed to fetch reports', err);
+    }
+  };
 
-    fetchReports();
-  }, []);
+  // ✅ Reload every time admin comes back to this screen
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchReports();
+    }, [])
+  );
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            await signOut(auth);
+            router.replace('/login');
+          },
+        },
+      ]
+    );
+  };
+
+  const totalCount = reports.length;
+  const verifiedCount = reports.filter((r) => r.status === 'verified').length;
 
   return (
     <View style={styles.safe}>
@@ -69,10 +108,11 @@ export default function AdminHomeScreen() {
               <Menu color="white" size={24} />
               <Text style={styles.title}>RoadGuard Admin</Text>
             </View>
-            <Bell color="white" size={22} />
+            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+              <LogOut color="white" size={20} />
+            </TouchableOpacity>
           </View>
 
-          {/* Info Card — replaced credits with manage reports text */}
           <View style={styles.creditsCard}>
             <Text style={styles.manageTitle}>Welcome, Admin 👋</Text>
             <View style={styles.divider} />
@@ -80,24 +120,24 @@ export default function AdminHomeScreen() {
           </View>
         </View>
 
-        {/* Stats */}
+        {/* Stats — now using correct full counts */}
         <View style={styles.statsRow}>
           <StatsCard
             icon={<MapPin color="#2563EB" size={20} />}
             label="Total Reports"
-            value={reports.length}
+            value={totalCount}
           />
           <StatsCard
             icon={<TrendingUp color="#16A34A" size={20} />}
             label="Verified"
-            value={reports.filter((r) => r.status === 'verified').length}
+            value={verifiedCount}
           />
         </View>
 
         {/* Manage Reports Button */}
         <Pressable
           style={styles.reportButton}
-          onPress={() => router.push('/AdminScreen')}
+          onPress={() => router.push('/ManageReports')}
         >
           <Text style={styles.reportText}>Manage Reports</Text>
         </Pressable>
@@ -106,7 +146,6 @@ export default function AdminHomeScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Nearby Potholes</Text>
-            <Text style={styles.link}>View All</Text>
           </View>
           <MapPreview />
         </View>
@@ -117,12 +156,12 @@ export default function AdminHomeScreen() {
             <Text style={styles.sectionTitle}>Recent Reports</Text>
           </View>
 
-          {reports.length === 0 ? (
+          {recentReports.length === 0 ? (
             <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>
               No reports submitted yet.
             </Text>
           ) : (
-            reports.map((report) => (
+            recentReports.map((report) => (
               <View key={report.id} style={styles.reportCard}>
                 {report.imageUrl && (
                   <Image
@@ -148,9 +187,8 @@ export default function AdminHomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F5F7FB' },
-
   header: {
-    backgroundColor: '#78c6a0',
+    backgroundColor: '#449a70',
     paddingHorizontal: 19,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 23,
     paddingBottom: 28,
@@ -164,27 +202,20 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   title: { color: '#ffffff', fontSize: 20, fontWeight: '600' },
-
+  logoutBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
+    padding: 8,
+    borderRadius: 10,
+  },
   creditsCard: {
     backgroundColor: 'rgb(101, 179, 141)',
     borderRadius: 20,
     padding: 16,
   },
-  // ✅ Replaced credits number with welcome text
-  manageTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    marginVertical: 12,
-  },
+  manageTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.3)', marginVertical: 12 },
   redeemText: { color: '#1a1a1a', fontSize: 13 },
-
   statsRow: { flexDirection: 'row', gap: 12, padding: 20 },
-
   reportButton: {
     flexDirection: 'row',
     backgroundColor: '#94dcb9',
@@ -196,16 +227,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   reportText: { color: 'black', fontSize: 16, fontWeight: '600' },
-
   section: { paddingHorizontal: 20, marginTop: 20 },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   sectionTitle: { fontSize: 16, fontWeight: '600' },
   link: { color: '#113b97', fontSize: 13 },
-
   reportCard: {
     flexDirection: 'row',
     alignItems: 'center',

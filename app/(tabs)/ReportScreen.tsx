@@ -1,5 +1,15 @@
 import React, { useRef, useState, useEffect } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  serverTimestamp,
+  getDocs,
+  query,
+  where,
+  updateDoc,
+  doc,
+  arrayUnion,
+} from "firebase/firestore";
 import { auth, db, storage } from "../../firebaseConfig";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
@@ -24,7 +34,7 @@ import {
 } from "expo-camera";
 
 import { Ionicons } from "@expo/vector-icons";
-import LocationPickerModal from "../components/LocationPickerModal"; 
+import LocationPickerModal from "../components/LocationPickerModal";
 
 export default function ReportScreen() {
   const cameraRef = useRef<CameraView>(null);
@@ -41,9 +51,9 @@ export default function ReportScreen() {
   const [flash, setFlash] = useState<FlashMode>("off");
   const [severity, setSeverity] = useState<"Medium" | "Severe">("Medium");
   const [details, setDetails] = useState("");
-  const [location, setLocation] = useState("Tap to set location"); // 👈 CHANGED
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null); // 👈 NEW
-  const [locationPickerVisible, setLocationPickerVisible] = useState(false); // 👈 NEW
+  const [location, setLocation] = useState("Tap to set location");
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationPickerVisible, setLocationPickerVisible] = useState(false);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -84,29 +94,15 @@ export default function ReportScreen() {
 
   const analyzePothole = async () => {
     if (!photo) return null;
-
     const formData = new FormData();
-    formData.append("image", {
-      uri: photo,
-      name: "pothole.jpg",
-      type: "image/jpeg",
-    } as any);
-
+    formData.append("image", { uri: photo, name: "pothole.jpg", type: "image/jpeg" } as any);
     try {
       const response = await fetch(
         "https://peckier-unentomological-chin.ngrok-free.dev/predict",
-        {
-          method: "POST",
-          body: formData,
-        }
+        { method: "POST", body: formData }
       );
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "AI server error");
-      }
-
+      if (!response.ok) throw new Error(data.error || "AI server error");
       return data;
     } catch (error) {
       Alert.alert("AI Error", "Failed to analyze image");
@@ -114,30 +110,105 @@ export default function ReportScreen() {
     }
   };
 
+  /**
+   * ✅ Find the ONE "master" report for this location.
+   * Strategy: get ALL reports at this location, then pick the one
+   * that is NOT a corroboration (isCorroboration != true).
+   * Works even if old docs don't have the isCorroboration field.
+   */
+  const getMasterReport = async (locationStr: string) => {
+    const q = query(
+      collection(db, "reports"),
+      where("location", "==", locationStr)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    // Find the primary/master doc — it's the one where isCorroboration is false or missing
+    const masterDoc = snap.docs.find((d) => {
+      const data = d.data() as any;
+      return data.isCorroboration !== true; // covers false AND undefined (old docs)
+    });
+
+    return masterDoc ?? null;
+  };
+
+  /**
+   * ✅ Count how many UNIQUE users have reported this location.
+   * We look at corroboratedBy on the master doc — that array holds all UIDs.
+   * If that field is missing (old docs), fall back to counting unique userIds across all docs.
+   */
+  const getUniqueReporterCount = async (locationStr: string): Promise<{
+    count: number;
+    masterDocId: string | null;
+    corroboratedBy: string[];
+  }> => {
+    const q = query(
+      collection(db, "reports"),
+      where("location", "==", locationStr)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return { count: 0, masterDocId: null, corroboratedBy: [] };
+
+    // Find master doc
+    const masterDoc = snap.docs.find((d) => (d.data() as any).isCorroboration !== true);
+    if (!masterDoc) return { count: 0, masterDocId: null, corroboratedBy: [] };
+
+    const masterData = masterDoc.data() as any;
+
+    // If corroboratedBy exists and has entries, use it as the source of truth
+    if (masterData.corroboratedBy && masterData.corroboratedBy.length > 0) {
+      return {
+        count: masterData.corroboratedBy.length,
+        masterDocId: masterDoc.id,
+        corroboratedBy: masterData.corroboratedBy,
+      };
+    }
+
+    // Fallback for old docs: count unique userIds across all reports at this location
+    const uniqueUserIds = Array.from(new Set(snap.docs.map((d) => (d.data() as any).userId))) as string[];
+    return {
+      count: uniqueUserIds.length,
+      masterDocId: masterDoc.id,
+      corroboratedBy: uniqueUserIds,
+    };
+  };
+
+  /**
+   * ✅ Check if THIS user already reported this location in any capacity
+   */
+  const hasUserAlreadyReported = async (locationStr: string): Promise<boolean> => {
+    const q = query(
+      collection(db, "reports"),
+      where("location", "==", locationStr),
+      where("userId", "==", auth.currentUser!.uid)
+    );
+    const snap = await getDocs(q);
+    return snap.size > 0;
+  };
+
+  const resetForm = () => {
+    setPhoto(null);
+    setDetails("");
+    setSeverity("Medium");
+    setProgress(0);
+    setLocation("Tap to set location");
+    setCoords(null);
+  };
+
   const handleSubmitReport = async () => {
-    if (!photo)
-      return Alert.alert("Error", "Please take a photo of the pothole");
-
-    if (!auth.currentUser)
-      return Alert.alert("Error", "You must be logged in");
-
-    // 👇 NEW: require location to be set
-    if (location === "Tap to set location")
-      return Alert.alert("Error", "Please set a location");
+    if (!photo) return Alert.alert("Error", "Please take a photo of the pothole");
+    if (!auth.currentUser) return Alert.alert("Error", "You must be logged in");
+    if (location === "Tap to set location") return Alert.alert("Error", "Please set a location");
 
     setLoading(true);
     setProgress(0);
 
     const aiResult = await analyzePothole();
-
-    if (!aiResult) {
-      setLoading(false);
-      return;
-    }
+    if (!aiResult) { setLoading(false); return; }
 
     const predictedClass = aiResult.class?.trim().toLowerCase();
     const confidence = aiResult.confidence ?? 1;
-
     if (predictedClass !== "pothole" || confidence < 0.75) {
       Alert.alert("Invalid Image", "This image does not contain a pothole.");
       setLoading(false);
@@ -145,6 +216,28 @@ export default function ReportScreen() {
     }
 
     try {
+      // ✅ Block if this user already reported this location
+      const alreadyReported = await hasUserAlreadyReported(location);
+      if (alreadyReported) {
+        Alert.alert("Already Reported", "You have already submitted a report for this location.");
+        setLoading(false);
+        return;
+      }
+
+      // ✅ Get the true unique reporter count using the robust method
+      const { count: reporterCount, masterDocId, corroboratedBy } = await getUniqueReporterCount(location);
+
+      // ✅ If 3 or more unique users already reported — block
+      if (reporterCount >= 3) {
+        Alert.alert(
+          "Pothole Already Reported 📢",
+          `This pothole has already been reported by ${reporterCount} users. Our team is aware of it and it is under review. Thank you for your concern! 🙏`
+        );
+        setLoading(false);
+        return;
+      }
+
+      // ✅ Upload photo
       const blob: Blob = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.onload = () => resolve(xhr.response);
@@ -156,45 +249,78 @@ export default function ReportScreen() {
 
       const fileName = `reports/${auth.currentUser.uid}_${Date.now()}.jpg`;
       const storageRef = ref(storage, fileName);
-
-      const uploadTask = uploadBytesResumable(storageRef, blob, {
-        contentType: "image/jpeg",
-      });
+      const uploadTask = uploadBytesResumable(storageRef, blob, { contentType: "image/jpeg" });
 
       await new Promise((resolve, reject) => {
         uploadTask.on(
           "state_changed",
-          (snapshot) => {
-            const percent =
-              (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            setProgress(percent);
-          },
-          (error) => reject(error),
+          (snapshot) => { setProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100); },
+          reject,
           () => resolve(true)
         );
       });
 
       const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
 
-      await addDoc(collection(db, "reports"), {
-        description: details || "",
-        imageUrl: downloadURL,
-        createdAt: serverTimestamp(),
-        severity,
-        location,
-        coords: coords ?? null, // 👈 NEW: saves lat/lng to Firestore
-        status: "pending",
-        userId: auth.currentUser.uid,
-      });
+      if (reporterCount > 0 && masterDocId) {
+        // ✅ CORROBORATING REPORT (2nd or 3rd reporter)
+        const newCount = reporterCount + 1;
 
-      Alert.alert("Success", "AI verified pothole report submitted ✅");
+        // Update master report with new corroborator UID + image
+        await updateDoc(doc(db, "reports", masterDocId), {
+          corroborationCount: newCount,
+          corroboratedBy: arrayUnion(auth.currentUser.uid),
+          corroboratorImages: arrayUnion(downloadURL),
+          isCorroboration: false, // ensure master is always marked correctly
+        });
 
-      setPhoto(null);
-      setDetails("");
-      setSeverity("Medium");
-      setProgress(0);
-      setLocation("Tap to set location"); // 👈 CHANGED
-      setCoords(null); // 👈 NEW
+        // Save personal corroboration record for user's profile
+        await addDoc(collection(db, "reports"), {
+          description: details || "",
+          imageUrl: downloadURL,
+          createdAt: serverTimestamp(),
+          severity,
+          location,
+          coords: coords ?? null,
+          status: "pending",
+          userId: auth.currentUser.uid,
+          creditEligible: true,
+          creditsAwarded: false,
+          isCorroboration: true,
+          originalReportId: masterDocId,
+          corroborationCount: newCount,
+        });
+
+        Alert.alert(
+          "Thanks for Confirming! 🙌",
+          `${newCount} users have now reported this pothole. You'll earn 50 credits once an admin verifies it.`
+        );
+      } else {
+        // ✅ FIRST REPORT — original reporter's UID in corroboratedBy from day 1
+        await addDoc(collection(db, "reports"), {
+          description: details || "",
+          imageUrl: downloadURL,
+          createdAt: serverTimestamp(),
+          severity,
+          location,
+          coords: coords ?? null,
+          status: "pending",
+          userId: auth.currentUser.uid,
+          creditEligible: true,
+          creditsAwarded: false,
+          isCorroboration: false,
+          corroborationCount: 1,
+          corroboratedBy: [auth.currentUser.uid],
+          corroboratorImages: [downloadURL],
+        });
+
+        Alert.alert(
+          "Report Submitted ✅",
+          "Your report was submitted! You'll earn 50 credits once an admin verifies it."
+        );
+      }
+
+      resetForm();
     } catch (error: any) {
       Alert.alert("Upload failed: " + error.message);
     }
@@ -225,12 +351,8 @@ export default function ReportScreen() {
       <View style={{ flex: 1 }}>
         <Image source={{ uri: photo }} style={{ flex: 1 }} />
         <View style={styles.previewActions}>
-          <TouchableOpacity onPress={retakePhoto}>
-            <Text style={styles.retake}>Retake</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={confirmPhoto}>
-            <Text style={styles.confirm}>Confirm</Text>
-          </TouchableOpacity>
+          <TouchableOpacity onPress={retakePhoto}><Text style={styles.retake}>Retake</Text></TouchableOpacity>
+          <TouchableOpacity onPress={confirmPhoto}><Text style={styles.confirm}>Confirm</Text></TouchableOpacity>
         </View>
       </View>
     );
@@ -244,7 +366,7 @@ export default function ReportScreen() {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Report Pothole</Text>
-      <Text style={styles.subtitle}>Earn 50 credits per report</Text>
+      <Text style={styles.subtitle}>Earn 50 credits per verified report</Text>
 
       <Text style={styles.label}>Photo of Pothole *</Text>
       <TouchableOpacity style={styles.photoBox} onPress={() => setCameraVisible(true)}>
@@ -264,18 +386,13 @@ export default function ReportScreen() {
           style={[styles.severityButton, severity === "Medium" && styles.severityMediumActive]}
           onPress={() => setSeverity("Medium")}
         >
-          <Text style={[styles.severityText, severity === "Medium" && styles.severityTextActive]}>
-            Medium
-          </Text>
+          <Text style={[styles.severityText, severity === "Medium" && styles.severityTextActive]}>Medium</Text>
         </TouchableOpacity>
-
         <TouchableOpacity
           style={[styles.severityButton, severity === "Severe" && styles.severitySevereActive]}
           onPress={() => setSeverity("Severe")}
         >
-          <Text style={[styles.severityText, severity === "Severe" && styles.severityTextActive]}>
-            Severe
-          </Text>
+          <Text style={[styles.severityText, severity === "Severe" && styles.severityTextActive]}>Severe</Text>
         </TouchableOpacity>
       </View>
 
@@ -288,25 +405,17 @@ export default function ReportScreen() {
         onChangeText={setDetails}
       />
 
-      {/* 👇 REPLACED: old static location box + useCurrentLocation button */}
       <Text style={styles.label}>Location *</Text>
-      <TouchableOpacity
-        style={styles.locationBox}
-        onPress={() => setLocationPickerVisible(true)}
-      >
+      <TouchableOpacity style={styles.locationBox} onPress={() => setLocationPickerVisible(true)}>
         <Ionicons name="location-outline" size={18} color="#6b7280" />
         <Text style={styles.locationText} numberOfLines={1}>{location}</Text>
         <Ionicons name="chevron-forward" size={16} color="#6b7280" />
       </TouchableOpacity>
 
-      {/* 👇 NEW: Location Picker Modal */}
       <LocationPickerModal
         visible={locationPickerVisible}
         onClose={() => setLocationPickerVisible(false)}
-        onConfirm={(address, c) => {
-          setLocation(address);
-          setCoords(c);
-        }}
+        onConfirm={(address, c) => { setLocation(address); setCoords(c); }}
       />
 
       <TouchableOpacity
@@ -325,6 +434,7 @@ export default function ReportScreen() {
       <View style={styles.rewardBox}>
         <Text style={styles.rewardLabel}>Reward</Text>
         <Text style={styles.rewardValue}>+50 Credits</Text>
+        <Text style={styles.rewardNote}>Awarded after admin verification</Text>
       </View>
     </ScrollView>
   );
@@ -333,83 +443,35 @@ export default function ReportScreen() {
 const styles = StyleSheet.create({
   container: { padding: 20, backgroundColor: "#fff", flexGrow: 1 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-
   title: { fontSize: 22, fontWeight: "700", marginBottom: 4, color: "#3566d0" },
   subtitle: { color: "#6B7280", marginBottom: 24 },
-
   label: { fontWeight: "600", marginBottom: 8, color: "#111827" },
-
-  photoBox: {
-    height: 140,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    borderColor: "#C7D2FE",
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 24,
-    backgroundColor: "#F9FAFB",
-  },
+  photoBox: { height: 140, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#C7D2FE", borderRadius: 12, justifyContent: "center", alignItems: "center", marginBottom: 24, backgroundColor: "#F9FAFB" },
   photo: { width: "100%", height: "100%", borderRadius: 12 },
   photoText: { marginTop: 6, color: "#4F7DF3", fontWeight: "600" },
-
   severityRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
-  severityButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    marginHorizontal: 5,
-  },
+  severityButton: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: "#F3F4F6", alignItems: "center", marginHorizontal: 5 },
   severityMediumActive: { backgroundColor: "#F59E0B" },
   severitySevereActive: { backgroundColor: "#EF4444" },
   severityText: { color: "#6B7280", fontWeight: "600" },
   severityTextActive: { color: "#fff" },
-
-  textArea: {
-    height: 100,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 28,
-    textAlignVertical: "top",
-  },
-
+  textArea: { height: 100, backgroundColor: "#F3F4F6", borderRadius: 10, padding: 12, marginBottom: 28, textAlignVertical: "top" },
   submitButton: { height: 50, borderRadius: 12, overflow: "hidden", marginBottom: 20 },
   submitButtonIdle: { backgroundColor: "#577FEF" },
   submitButtonUploading: { backgroundColor: "#D1D5DB" },
-  submitButtonContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    position: "relative",
-    width: "100%",
-  },
+  submitButtonContainer: { flex: 1, justifyContent: "center", alignItems: "center", position: "relative", width: "100%" },
   submitButtonProgress: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: "#577FEF", zIndex: 0 },
   submitButtonText: { color: "#fff", fontWeight: "700", zIndex: 1 },
-
-  rewardBox: { backgroundColor: "#ECFDF5", padding: 16, borderRadius: 12, alignItems: "center" },
+  rewardBox: { backgroundColor: "#ECFDF5", padding: 16, borderRadius: 12, alignItems: "center", marginBottom: 30 },
   rewardLabel: { color: "#065F46" },
   rewardValue: { fontWeight: "800", color: "#057350" },
-
+  rewardNote: { color: "#6B7280", fontSize: 11, marginTop: 4 },
   topControls: { position: "absolute", top: 50, left: 20, right: 20, flexDirection: "row", justifyContent: "space-between" },
   cameraBottom: { position: "absolute", bottom: 40, alignSelf: "center" },
   captureButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#fff", borderWidth: 4, borderColor: "#ddd" },
-
   previewActions: { flexDirection: "row", justifyContent: "space-around", padding: 16, backgroundColor: "#000" },
   retake: { color: "#F87171", fontSize: 16 },
   confirm: { color: "#4ADE80", fontSize: 16 },
-
-  // 👇 UPDATED: locationBox now has chevron arrow to indicate it's tappable
-  locationBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#f3f4f6",
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 24, // increased from 12 since useLocation button is removed
-  },
+  locationBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#f3f4f6", padding: 14, borderRadius: 10, marginBottom: 24 },
   locationText: { flex: 1, color: "#3c5782" },
 });
