@@ -47,6 +47,30 @@ function Input({ icon, rightIcon, ...props }: InputProps) {
   );
 }
 
+// ✅ Maps Firebase error codes to human-friendly messages
+function getFriendlyError(code: string): string {
+  switch (code) {
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
+      return 'Incorrect password. Please try again.';
+    case 'auth/user-not-found':
+      return 'No account found with this email.';
+    case 'auth/email-already-in-use':
+      return 'This email is already registered. Try logging in.';
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.';
+    case 'auth/too-many-requests':
+      return 'Too many failed attempts. Please wait a moment and try again.';
+    case 'auth/network-request-failed':
+      return 'Network error. Please check your connection.';
+    case 'auth/weak-password':
+      return 'Password must be at least 6 characters.';
+    default:
+      return 'Something went wrong. Please try again.';
+  }
+}
+
 export default function AuthScreen() {
   const router = useRouter();
 
@@ -55,7 +79,6 @@ export default function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // form fields
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -64,7 +87,6 @@ export default function AuthScreen() {
 
   /* ---------- SUBMIT HANDLER ---------- */
   const handleSubmit = async () => {
-    // ---------- VALIDATIONS ----------
     if (!email || !password || (!isLogin && role === 'user' && (!fullName || !phone))) {
       Alert.alert('Error', 'Please fill all required fields.');
       return;
@@ -82,11 +104,9 @@ export default function AuthScreen() {
 
     try {
       if (isLogin) {
-        // ---------- LOGIN ----------
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // check Firestore role
         const docRef = doc(db, 'users', user.uid);
         const docSnap = await getDoc(docRef);
 
@@ -98,34 +118,23 @@ export default function AuthScreen() {
 
         const roleFromDB = docSnap.data().role;
 
-        // ---------- ADMIN STRICT CHECK ----------
-      if (role === 'admin' && roleFromDB !== 'admin') {
-  await auth.signOut();
+        if (role === 'admin' && roleFromDB !== 'admin') {
+          await auth.signOut();
+          Alert.alert('Access Denied', 'This account is not an admin.', [{ text: 'OK' }]);
+          setPassword('');
+          setEmail('');
+          return;
+        }
 
-  Alert.alert(
-    'Access Denied',
-    'This account is not an admin.',
-    [{ text: 'OK' }]
-  );
-
-  // clear fields so app does not feel stuck
-  setPassword('');
-  setEmail('');
-
-  return;
-}
-        // ---------- NAVIGATION ----------
         if (roleFromDB === 'admin') {
           router.replace('/(admin-tabs)/HomeScreen');
         } else {
           router.replace('/(tabs)/HomeScreen');
         }
       } else {
-        // ---------- SIGNUP ----------
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // save extra info in Firestore
         await setDoc(doc(db, 'users', user.uid), {
           fullName,
           email,
@@ -137,7 +146,8 @@ export default function AuthScreen() {
         router.replace(role === 'admin' ? '/(admin-tabs)/HomeScreen' : '/(tabs)/HomeScreen');
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      // ✅ Show friendly message instead of raw Firebase error
+      Alert.alert('Error', getFriendlyError(error.code));
     }
   };
 
@@ -174,7 +184,6 @@ export default function AuthScreen() {
             </Pressable>
           </View>
 
-          {/* Signup fields for user */}
           {role === 'user' && !isLogin && (
             <Input
               icon={<User size={20} color="#94A3B8" />}
@@ -261,7 +270,6 @@ export default function AuthScreen() {
   );
 }
 
-/* ---------- Styles (unchanged) ---------- */
 const ui = StyleSheet.create({
   container: { flex: 1 },
   scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },

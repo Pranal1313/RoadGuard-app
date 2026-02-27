@@ -18,6 +18,7 @@ type PotholeReport = {
   coords: { lat: number; lng: number } | null;
   severity: string;
   location: string;
+  createdAt: number;
 };
 
 type Props = {
@@ -28,7 +29,6 @@ export default function MapPreview({ refreshKey = 0 }: Props) {
   const [reports, setReports] = useState<PotholeReport[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ✅ Refetches whenever refreshKey changes
   useEffect(() => {
     const fetchReports = async () => {
       setLoading(true);
@@ -44,9 +44,14 @@ export default function MapPreview({ refreshKey = 0 }: Props) {
               location: d.location || d.address || "",
               repairedClosed: d.repairedClosed ?? false,
               isCorroboration: d.isCorroboration ?? false,
+              createdAt: d.createdAt?.toMillis?.() ?? 0,
             };
           })
           .filter((r) => r.coords !== null && !r.repairedClosed && !r.isCorroboration);
+
+        // ✅ Sort oldest first — index 0 will be the oldest report
+        loaded.sort((a, b) => a.createdAt - b.createdAt);
+
         setReports(loaded);
       } catch (err) {
         console.error("Failed to fetch reports for map", err);
@@ -79,6 +84,7 @@ export default function MapPreview({ refreshKey = 0 }: Props) {
     );
   }
 
+  // ✅ Center on oldest report (index 0), fallback to Sri Lanka
   const center =
     reports.length > 0
       ? { latitude: reports[0].coords!.lat, longitude: reports[0].coords!.lng }
@@ -108,7 +114,6 @@ export default function MapPreview({ refreshKey = 0 }: Props) {
             description={report.location}
             anchor={{ x: 0.5, y: 0.5 }}
           >
-            {/* Custom small dot pin */}
             <View style={styles.pinOuter}>
               <View style={[styles.pinInner, { backgroundColor: getPinColor(report.severity) }]} />
             </View>

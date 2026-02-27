@@ -24,6 +24,8 @@ import {
   Button,
   Alert,
   Animated,
+  Platform,
+  StatusBar,
 } from "react-native";
 
 import {
@@ -110,73 +112,35 @@ export default function ReportScreen() {
     }
   };
 
-  /**
-   * ✅ Find the ONE "master" report for this location.
-   * Strategy: get ALL reports at this location, then pick the one
-   * that is NOT a corroboration (isCorroboration != true).
-   * Works even if old docs don't have the isCorroboration field.
-   */
   const getMasterReport = async (locationStr: string) => {
-    const q = query(
-      collection(db, "reports"),
-      where("location", "==", locationStr)
-    );
+    const q = query(collection(db, "reports"), where("location", "==", locationStr));
     const snap = await getDocs(q);
     if (snap.empty) return null;
-
-    // Find the primary/master doc — it's the one where isCorroboration is false or missing
-    const masterDoc = snap.docs.find((d) => {
-      const data = d.data() as any;
-      return data.isCorroboration !== true; // covers false AND undefined (old docs)
-    });
-
+    const masterDoc = snap.docs.find((d) => (d.data() as any).isCorroboration !== true);
     return masterDoc ?? null;
   };
 
-  /**
-   * ✅ Count how many UNIQUE users have reported this location.
-   * We look at corroboratedBy on the master doc — that array holds all UIDs.
-   * If that field is missing (old docs), fall back to counting unique userIds across all docs.
-   */
   const getUniqueReporterCount = async (locationStr: string): Promise<{
     count: number;
     masterDocId: string | null;
     corroboratedBy: string[];
   }> => {
-    const q = query(
-      collection(db, "reports"),
-      where("location", "==", locationStr)
-    );
+    const q = query(collection(db, "reports"), where("location", "==", locationStr));
     const snap = await getDocs(q);
     if (snap.empty) return { count: 0, masterDocId: null, corroboratedBy: [] };
 
-    // Find master doc
     const masterDoc = snap.docs.find((d) => (d.data() as any).isCorroboration !== true);
     if (!masterDoc) return { count: 0, masterDocId: null, corroboratedBy: [] };
 
     const masterData = masterDoc.data() as any;
-
-    // If corroboratedBy exists and has entries, use it as the source of truth
     if (masterData.corroboratedBy && masterData.corroboratedBy.length > 0) {
-      return {
-        count: masterData.corroboratedBy.length,
-        masterDocId: masterDoc.id,
-        corroboratedBy: masterData.corroboratedBy,
-      };
+      return { count: masterData.corroboratedBy.length, masterDocId: masterDoc.id, corroboratedBy: masterData.corroboratedBy };
     }
 
-    // Fallback for old docs: count unique userIds across all reports at this location
     const uniqueUserIds = Array.from(new Set(snap.docs.map((d) => (d.data() as any).userId))) as string[];
-    return {
-      count: uniqueUserIds.length,
-      masterDocId: masterDoc.id,
-      corroboratedBy: uniqueUserIds,
-    };
+    return { count: uniqueUserIds.length, masterDocId: masterDoc.id, corroboratedBy: uniqueUserIds };
   };
 
-  /**
-   * ✅ Check if THIS user already reported this location in any capacity
-   */
   const hasUserAlreadyReported = async (locationStr: string): Promise<boolean> => {
     const q = query(
       collection(db, "reports"),
@@ -216,7 +180,6 @@ export default function ReportScreen() {
     }
 
     try {
-      // ✅ Block if this user already reported this location
       const alreadyReported = await hasUserAlreadyReported(location);
       if (alreadyReported) {
         Alert.alert("Already Reported", "You have already submitted a report for this location.");
@@ -224,20 +187,17 @@ export default function ReportScreen() {
         return;
       }
 
-      // ✅ Get the true unique reporter count using the robust method
       const { count: reporterCount, masterDocId, corroboratedBy } = await getUniqueReporterCount(location);
 
-      // ✅ If 3 or more unique users already reported — block
       if (reporterCount >= 3) {
         Alert.alert(
           "Pothole Already Reported 📢",
-          `This pothole has already been reported by ${reporterCount} users. Our team is aware of it and it is under review. Thank you for your concern! 🙏`
+          `This pothole has already been reported by ${reporterCount} users. It is under review. Thank you for your concern! 🙏`
         );
         setLoading(false);
         return;
       }
 
-      // ✅ Upload photo
       const blob: Blob = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.onload = () => resolve(xhr.response);
@@ -263,18 +223,13 @@ export default function ReportScreen() {
       const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
 
       if (reporterCount > 0 && masterDocId) {
-        // ✅ CORROBORATING REPORT (2nd or 3rd reporter)
         const newCount = reporterCount + 1;
-
-        // Update master report with new corroborator UID + image
         await updateDoc(doc(db, "reports", masterDocId), {
           corroborationCount: newCount,
           corroboratedBy: arrayUnion(auth.currentUser.uid),
           corroboratorImages: arrayUnion(downloadURL),
-          isCorroboration: false, // ensure master is always marked correctly
+          isCorroboration: false,
         });
-
-        // Save personal corroboration record for user's profile
         await addDoc(collection(db, "reports"), {
           description: details || "",
           imageUrl: downloadURL,
@@ -290,13 +245,8 @@ export default function ReportScreen() {
           originalReportId: masterDocId,
           corroborationCount: newCount,
         });
-
-        Alert.alert(
-          "Thanks for Confirming! 🙌",
-          `${newCount} users have now reported this pothole. You'll earn 50 credits once an admin verifies it.`
-        );
+        Alert.alert("Thanks for Confirming! 🙌", `${newCount} users have now reported this pothole. You'll earn 50 credits once an admin verifies it.`);
       } else {
-        // ✅ FIRST REPORT — original reporter's UID in corroboratedBy from day 1
         await addDoc(collection(db, "reports"), {
           description: details || "",
           imageUrl: downloadURL,
@@ -313,11 +263,7 @@ export default function ReportScreen() {
           corroboratedBy: [auth.currentUser.uid],
           corroboratorImages: [downloadURL],
         });
-
-        Alert.alert(
-          "Report Submitted ✅",
-          "Your report was submitted! You'll earn 50 credits once an admin verifies it."
-        );
+        Alert.alert("Report Submitted ✅", "Your report was submitted! You'll earn 50 credits once an admin verifies it.");
       }
 
       resetForm();
@@ -328,9 +274,16 @@ export default function ReportScreen() {
     setLoading(false);
   };
 
+  // ✅ Camera screen with back button
   if (cameraVisible && !isPreview) {
     return (
       <CameraView ref={cameraRef} style={{ flex: 1 }} facing={cameraType} flash={flash}>
+        {/* ✅ Back button */}
+        <TouchableOpacity style={styles.cameraBackBtn} onPress={() => setCameraVisible(false)}>
+          <Ionicons name="arrow-back" size={24} color="white" />
+        </TouchableOpacity>
+
+        {/* Flash + flip controls */}
         <View style={styles.topControls}>
           <TouchableOpacity onPress={() => setFlash(flash === "off" ? "on" : "off")}>
             <Ionicons name={flash === "on" ? "flash" : "flash-off"} size={28} color="white" />
@@ -339,6 +292,7 @@ export default function ReportScreen() {
             <Ionicons name="camera-reverse" size={30} color="white" />
           </TouchableOpacity>
         </View>
+
         <View style={styles.cameraBottom}>
           <TouchableOpacity style={styles.captureButton} onPress={takePicture} />
         </View>
@@ -466,7 +420,17 @@ const styles = StyleSheet.create({
   rewardLabel: { color: "#065F46" },
   rewardValue: { fontWeight: "800", color: "#057350" },
   rewardNote: { color: "#6B7280", fontSize: 11, marginTop: 4 },
-  topControls: { position: "absolute", top: 50, left: 20, right: 20, flexDirection: "row", justifyContent: "space-between" },
+  // Camera styles
+  cameraBackBtn: {
+    position: "absolute",
+    top: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) + 12 : 56,
+    left: 20,
+    zIndex: 10,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    padding: 8,
+    borderRadius: 999,
+  },
+  topControls: { position: "absolute", top: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) + 12 : 56, left: 20, right: 20, flexDirection: "row", justifyContent: "flex-end", gap: 16 },
   cameraBottom: { position: "absolute", bottom: 40, alignSelf: "center" },
   captureButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#fff", borderWidth: 4, borderColor: "#ddd" },
   previewActions: { flexDirection: "row", justifyContent: "space-around", padding: 16, backgroundColor: "#000" },
