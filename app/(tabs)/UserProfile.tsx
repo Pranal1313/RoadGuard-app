@@ -12,10 +12,8 @@ import {
 } from 'react-native';
 import {
   ChevronLeft,
-  Settings,
   Award,
   CreditCard,
-  Edit,
   LogOut,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
@@ -57,7 +55,7 @@ export default function UserProfile() {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setFullName(data.fullName || 'User');
-        setCredits(data.credits || 0); // ✅ Always fresh from Firestore
+        setCredits(data.credits || 0);
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to load profile data');
@@ -89,7 +87,6 @@ export default function UserProfile() {
     }
   };
 
-  // ✅ Reload every time profile tab is opened
   useFocusEffect(
     React.useCallback(() => {
       loadUserData();
@@ -115,7 +112,7 @@ export default function UserProfile() {
               <ChevronLeft color="white" size={24} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Profile</Text>
-            <Settings color="white" size={22} />
+            <View style={{ width: 24 }} />
           </View>
 
           {/* Profile Card */}
@@ -174,7 +171,6 @@ export default function UserProfile() {
                   <Text style={styles.statusText}>
                     Status: {report.status.toUpperCase()}
                   </Text>
-                  {/* ✅ Show credit status per report */}
                   <Text style={[
                     styles.creditBadge,
                     report.creditsAwarded
@@ -197,7 +193,6 @@ export default function UserProfile() {
 
         {/* Actions */}
         <View style={styles.actionsBox}>
-          <ActionItem icon={<Edit size={20} color="#2563EB" />} label="Edit Profile" />
           <ActionItem
             icon={<LogOut size={20} color="#DC2626" />}
             label="Logout"

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../../firebaseConfig';
 import StatsCard from '../components/StatsCard';
@@ -32,6 +32,7 @@ type Report = {
   status: string;
   createdAt?: number;
   isCorroboration?: boolean;
+  repairedClosed?: boolean;
 };
 
 export default function AdminHomeScreen() {
@@ -41,7 +42,6 @@ export default function AdminHomeScreen() {
 
   const fetchReports = async () => {
     try {
-      // ✅ Fetch ALL reports for accurate counts (no limit)
       const allSnap = await getDocs(collection(db, 'reports'));
       const allLoaded: Report[] = allSnap.docs.map((docSnap) => {
         const data = docSnap.data() as any;
@@ -52,14 +52,17 @@ export default function AdminHomeScreen() {
           status: data.status || 'pending',
           createdAt: data.createdAt?.toMillis?.() ?? 0,
           isCorroboration: data.isCorroboration ?? false,
+          repairedClosed: data.repairedClosed ?? false,
         };
       });
 
-      // ✅ For stats: only count primary (non-corroboration) reports
-      const primaryReports = allLoaded.filter((r) => r.isCorroboration !== true);
+      // ✅ For stats: only count primary (non-corroboration) reports that are NOT closed
+      const primaryReports = allLoaded.filter(
+        (r) => r.isCorroboration !== true && !r.repairedClosed
+      );
       setReports(primaryReports);
 
-      // ✅ For "Recent Reports" section: show latest 2 primary reports
+      // ✅ For "Recent Reports": show latest 2 primary non-closed reports
       const recent = [...primaryReports]
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, 2);
@@ -69,7 +72,6 @@ export default function AdminHomeScreen() {
     }
   };
 
-  // ✅ Reload every time admin comes back to this screen
   useFocusEffect(
     React.useCallback(() => {
       fetchReports();
@@ -120,7 +122,7 @@ export default function AdminHomeScreen() {
           </View>
         </View>
 
-        {/* Stats — now using correct full counts */}
+        {/* Stats */}
         <View style={styles.statsRow}>
           <StatsCard
             icon={<MapPin color="#2563EB" size={20} />}

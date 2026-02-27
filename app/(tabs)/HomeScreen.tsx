@@ -31,20 +31,20 @@ type Report = {
   location: string;
   status: string;
   createdAt?: number;
+  repairedClosed?: boolean;
 };
 
 export default function HomeScreen() {
   const router = useRouter();
   const [credits, setCredits] = useState(0);
   const [reports, setReports] = useState<Report[]>([]);
+  const [mapRefreshKey, setMapRefreshKey] = useState(0); // ✅ forces map refetch when incremented
 
   const loadData = () => {
-    // ✅ Wait for Firebase auth to be ready before querying
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      unsubscribe(); // only need it once
+      unsubscribe();
       if (!user) return;
 
-      // Fetch credits
       try {
         const userDocRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userDocRef);
@@ -55,7 +55,6 @@ export default function HomeScreen() {
         console.error('Failed to load credits', err);
       }
 
-      // Fetch this user's reports only
       try {
         const q = query(
           collection(db, 'reports'),
@@ -70,22 +69,25 @@ export default function HomeScreen() {
             location: data.location || data.address || 'Unknown Location',
             status: data.status || 'pending',
             createdAt: data.createdAt?.toMillis?.() ?? 0,
+            repairedClosed: data.repairedClosed ?? false,
           };
         });
 
-        // Sort newest first, show only 2
         const sorted = loaded
+          .filter((r) => !r.repairedClosed)
           .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
           .slice(0, 2);
 
         setReports(sorted);
+
+        // ✅ Increment to tell MapPreview to refetch right now
+        setMapRefreshKey((prev) => prev + 1);
       } catch (err) {
         console.error('Failed to fetch reports', err);
       }
     });
   };
 
-  // Reload every time screen is focused
   useFocusEffect(
     React.useCallback(() => {
       loadData();
@@ -105,7 +107,6 @@ export default function HomeScreen() {
             <Bell color="white" size={22} />
           </View>
 
-          {/* Credits Card */}
           <View style={styles.creditsCard}>
             <View style={styles.rowBetween}>
               <View>
@@ -152,7 +153,7 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>Nearby Potholes</Text>
             <Text style={styles.link}>View All</Text>
           </View>
-          <MapPreview />
+          <MapPreview refreshKey={mapRefreshKey} />
         </View>
 
         {/* Recent Reports */}

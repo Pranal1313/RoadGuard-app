@@ -13,6 +13,10 @@ export default function TabsLayout({ route }: any) {
       {/* User Screens */}
       <Tabs.Screen name="HomeScreen" options={{ title: 'Home' }} />
       <Tabs.Screen name="ReportScreen" options={{ title: 'Report' }} />
+      <Tabs.Screen
+        name="RepairVerificationScreen"
+        options={{ title: 'Verify Repairs' }}
+      />
       <Tabs.Screen name="UserProfile" options={{ title: 'My Account' }} />
 
       {/* Admin screen only for admin */}

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ActivityIndicator, Platform } from "react-native"; // ✅ Platform added here
+import React, { useState, useEffect } from "react";
+import { View, Text, StyleSheet, ActivityIndicator, Platform } from "react-native";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../firebaseConfig";
 
@@ -20,12 +20,18 @@ type PotholeReport = {
   location: string;
 };
 
-export default function MapPreview() {
+type Props = {
+  refreshKey?: number;
+};
+
+export default function MapPreview({ refreshKey = 0 }: Props) {
   const [reports, setReports] = useState<PotholeReport[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ✅ Refetches whenever refreshKey changes
   useEffect(() => {
     const fetchReports = async () => {
+      setLoading(true);
       try {
         const snapshot = await getDocs(collection(db, "reports"));
         const loaded: PotholeReport[] = snapshot.docs
@@ -36,9 +42,11 @@ export default function MapPreview() {
               coords: d.coords || null,
               severity: d.severity || "Medium",
               location: d.location || d.address || "",
+              repairedClosed: d.repairedClosed ?? false,
+              isCorroboration: d.isCorroboration ?? false,
             };
           })
-          .filter((r) => r.coords !== null); // only show reports with GPS coords
+          .filter((r) => r.coords !== null && !r.repairedClosed && !r.isCorroboration);
         setReports(loaded);
       } catch (err) {
         console.error("Failed to fetch reports for map", err);
@@ -47,13 +55,12 @@ export default function MapPreview() {
     };
 
     fetchReports();
-  }, []);
+  }, [refreshKey]);
 
-  // Color based on severity
   const getPinColor = (severity: string) => {
-    if (severity === "Severe") return "#EF4444";   // red
-    if (severity === "Medium") return "#F97316";   // orange
-    return "#FACC15";                              // yellow
+    if (severity === "Severe") return "#e93d3d";
+    if (severity === "Medium") return "#f19452";
+    return "#FACC15";
   };
 
   if (loading) {
@@ -72,7 +79,6 @@ export default function MapPreview() {
     );
   }
 
-  // Center map on first report or default to Sri Lanka
   const center =
     reports.length > 0
       ? { latitude: reports[0].coords!.lat, longitude: reports[0].coords!.lng }
@@ -100,8 +106,13 @@ export default function MapPreview() {
             }}
             title={report.severity + " Pothole"}
             description={report.location}
-            pinColor={getPinColor(report.severity)}
-          />
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            {/* Custom small dot pin */}
+            <View style={styles.pinOuter}>
+              <View style={[styles.pinInner, { backgroundColor: getPinColor(report.severity) }]} />
+            </View>
+          </Marker>
         ) : null
       )}
     </MapView>
@@ -109,20 +120,9 @@ export default function MapPreview() {
 }
 
 const styles = StyleSheet.create({
-  map: {
-    height: 220,
-    borderRadius: 16,
-    overflow: "hidden",
-  },
-  placeholder: {
-    height: 220,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  placeholderText: {
-    color: "#6B7280",
-    fontSize: 14,
-  },
+  map: { height: 220, borderRadius: 16, overflow: "hidden" },
+  placeholder: { height: 220, backgroundColor: "#E5E7EB", borderRadius: 16, justifyContent: "center", alignItems: "center" },
+  placeholderText: { color: "#6B7280", fontSize: 14 },
+  pinOuter: { width: 18, height: 18, borderRadius: 9, backgroundColor: "white", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 4 },
+  pinInner: { width: 11, height: 11, borderRadius: 6 },
 });

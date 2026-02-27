@@ -142,9 +142,11 @@ export default function RepairVerificationScreen() {
     );
   };
 
+  // ✅ "All" tab: only shows open/pending reports (NOT closed)
+  // ✅ "Closed" tab: only shows closed reports
   const filteredReports = reports.filter((r) => {
-    if (activeFilter === "all") return true;
-    return r.repairStatus === "closed";
+    if (activeFilter === "closed") return r.repairStatus === "closed";
+    return r.repairStatus !== "closed"; // All tab hides closed
   });
 
   const closedCount = reports.filter((r) => r.repairStatus === "closed").length;
@@ -174,7 +176,7 @@ export default function RepairVerificationScreen() {
         </View>
       </View>
 
-      {/* Filter chips — only All + Closed */}
+      {/* Filter chips */}
       <View style={styles.filterRow}>
         {(["all", "closed"] as const).map((f) => (
           <TouchableOpacity
@@ -204,12 +206,18 @@ export default function RepairVerificationScreen() {
             <View style={styles.emptyBox}>
               <Text style={styles.emptyIcon}>🛣️</Text>
               <Text style={styles.emptyTitle}>
-                {reports.length === 0 ? "No verified reports yet" : "No closed reports yet"}
+                {activeFilter === "closed"
+                  ? "No closed reports yet"
+                  : reports.length === 0
+                  ? "No verified reports yet"
+                  : "No open reports"}
               </Text>
               <Text style={styles.emptyDesc}>
-                {reports.length === 0
+                {activeFilter === "closed"
+                  ? "When the admin officially closes a repair, it will appear here."
+                  : reports.length === 0
                   ? "Once your reported potholes are verified by the admin, they'll appear here for you to confirm repairs."
-                  : "When the admin officially closes a repair, it will appear here."}
+                  : "All your reports have been closed. Check the Closed tab."}
               </Text>
             </View>
           ) : (
@@ -296,22 +304,23 @@ function ReportVoteCard({ report, currentUserId, onVote }: {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F1F5F9" },
   header: {
-    backgroundColor: "#064E3B",
+    backgroundColor: "#042262",
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) + 10 : 52,
+  
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) + 10 : 32,
     paddingBottom: 24,
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
   },
   headerTitle: { color: "white", fontSize: 22, fontWeight: "800" },
-  headerSubtitle: { color: "#A7F3D0", marginTop: 4, fontSize: 13 },
-  summaryRow: { flexDirection: "row", marginTop: 16, gap: 8 },
+  headerSubtitle: { color: "#a1dbff", marginTop: 4, fontSize: 13 },
+  summaryRow: { flexDirection: "row", marginTop: 16, gap: 8 ,marginBottom:6,},
   summaryPill: { flex: 1, borderRadius: 12, paddingVertical: 8, alignItems: "center" },
   summaryNum: { color: "white", fontSize: 18, fontWeight: "800" },
   summaryLabel: { color: "rgba(255,255,255,0.8)", fontSize: 10, fontWeight: "600", marginTop: 2 },
   filterRow: { flexDirection: "row", paddingHorizontal: 20, paddingVertical: 14, gap: 8 },
-  filterChip: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: "#E2E8F0" },
-  filterChipActive: { backgroundColor: "#064E3B" },
+  filterChip: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, marginTop:5,backgroundColor: "#E2E8F0" },
+  filterChipActive: { backgroundColor: "#446dac" },
   filterChipText: { fontSize: 13, fontWeight: "600", color: "#475569" },
   filterChipTextActive: { color: "white" },
   loadingBox: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
@@ -321,14 +330,23 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: "700", color: "#1E293B", marginBottom: 8 },
   emptyDesc: { fontSize: 14, color: "#64748B", textAlign: "center", lineHeight: 20 },
   list: { paddingHorizontal: 20, paddingBottom: 30, paddingTop: 4 },
-  card: {
-    borderRadius: 20, borderWidth: 1.5, marginBottom: 16, padding: 16,
-    shadowColor: "#000", shadowOpacity: 0.07, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 }, elevation: 3,
-  },
-  cardClosed: { backgroundColor: "#F0FDF4", borderColor: "#86EFAC" },
-  cardPending: { backgroundColor: "#FFFBEB", borderColor: "#FCD34D" },
-  cardUnknown: { backgroundColor: "white", borderColor: "#E2E8F0" },
+card: {
+  borderRadius: 25,
+  marginBottom: 16,
+  marginTop: 7,
+  paddingHorizontal: 16,
+  paddingVertical: 24,
+  gap: 16, // 👈 ADD THIS
+  shadowColor: "#000",
+  shadowOpacity: 0.08,
+  shadowRadius: 12,
+  shadowOffset: { width: 0, height: 5 },
+  elevation: 4,
+},
+  cardClosed: { backgroundColor: "#e7f2f8", borderColor: "#446dac", borderWidth: 2, },
+  cardPending: { backgroundColor: "#FFFBEB", borderColor: "#FCD34D" , borderWidth: 2,},
+  cardUnknown: { backgroundColor: "#FFF7D6",borderColor: "#F59E0B", borderWidth: 2,
+ },
   cardTop: { flexDirection: "row", gap: 12, marginBottom: 14 },
   thumb: { width: 80, height: 80, borderRadius: 12 },
   thumbPlaceholder: { backgroundColor: "#E2E8F0", justifyContent: "center", alignItems: "center" },
@@ -345,8 +363,19 @@ const styles = StyleSheet.create({
   fixedBtnText: { color: "white", fontWeight: "700", fontSize: 14 },
   votedBanner: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FFFBEB", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: "#FCD34D" },
   votedText: { fontSize: 12, color: "#92400E", fontWeight: "600", flex: 1 },
-  closedBanner: { backgroundColor: "#DCFCE7", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, alignItems: "center" },
-  closedBannerText: { fontSize: 13, color: "#15803D", fontWeight: "700", textAlign: "center" },
+closedBanner: {
+  backgroundColor: "#b7dff7",
+  borderRadius: 14,          // slightly more rounded
+  paddingHorizontal: 16,     // more width padding
+  paddingVertical: 14,       // more height padding
+  alignItems: "center",
+  marginTop: 6,              // little breathing space
+  shadowColor: "#000",
+  shadowOpacity: 0.08,
+  shadowRadius: 6,
+  shadowOffset: { width: 0, height: 3 },
+  elevation: 2,
+},  closedBannerText: { fontSize: 13, color: "#29466d", fontWeight: "700", textAlign: "center" },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", justifyContent: "center", alignItems: "center" },
   closeBtn: { position: "absolute", top: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) + 12 : 56, right: 20, zIndex: 10, backgroundColor: "rgba(255,255,255,0.15)", padding: 8, borderRadius: 999 },
   fullImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },

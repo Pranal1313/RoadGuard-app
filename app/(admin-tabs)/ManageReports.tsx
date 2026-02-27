@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, StatusBar, Platform,
   TouchableOpacity, Image, Alert, Modal, Dimensions,
 } from "react-native";
-import { User, MapPin, AlertCircle, CheckCircle, Flame, XCircle, X, Wrench } from "lucide-react-native";
+import { User, MapPin, AlertCircle, CheckCircle, Flame, XCircle, X } from "lucide-react-native";
 import {
   collection, getDocs, doc, updateDoc, query, orderBy, getDoc, setDoc, where,
 } from "firebase/firestore";
@@ -12,7 +12,7 @@ import { db } from "../../firebaseConfig";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 type ReportStatus = "pending" | "verified" | "rejected";
-type ReportFilter = "all" | "pending" | "verified" | "rejected" | "multiuser" | "repair";
+type ReportFilter = "multiuser" | "repair" | "all" | "pending" | "verified" | "rejected";
 
 type Report = {
   id: string;
@@ -31,6 +31,7 @@ type Report = {
   repairVerificationPending: boolean;
   repairedClosed: boolean;
   repairVerifiedAt?: string;
+  fixedVotes: string[];
 };
 
 function ImageViewerModal({ visible, imageUrl, onClose }: {
@@ -50,7 +51,7 @@ function ImageViewerModal({ visible, imageUrl, onClose }: {
 
 export default function AdminDashboardScreen() {
   const [activeTab, setActiveTab] = useState<"Dashboard" | "Reports">("Dashboard");
-  const [activeFilter, setActiveFilter] = useState<ReportFilter>("all");
+  const [activeFilter, setActiveFilter] = useState<ReportFilter>("multiuser");
   const [reports, setReports] = useState<Report[]>([]);
 
   const fetchReports = async () => {
@@ -89,6 +90,7 @@ export default function AdminDashboardScreen() {
             repairVerificationPending: d.repairVerificationPending ?? false,
             repairedClosed: d.repairedClosed ?? false,
             repairVerifiedAt: d.repairVerifiedAt,
+            fixedVotes: d.fixedVotes ?? [],
           };
         })
         .filter((r) => !r.isCorroboration);
@@ -107,7 +109,6 @@ export default function AdminDashboardScreen() {
   const verified = reports.filter((r) => r.status === "verified").length;
   const rejected = reports.filter((r) => r.status === "rejected").length;
   const multi = reports.filter((r) => r.corroborationCount >= 2).length;
-  // Repair requests: reporter said it's fixed, admin hasn't closed yet
   const repairPending = reports.filter((r) => r.repairVerificationPending && !r.repairedClosed).length;
 
   const goToReports = (filter: ReportFilter) => {
@@ -116,20 +117,23 @@ export default function AdminDashboardScreen() {
   };
 
   const filteredReports = reports.filter((r) => {
-    if (activeFilter === "all") return true;
     if (activeFilter === "multiuser") return r.corroborationCount >= 2;
     if (activeFilter === "repair") return r.repairVerificationPending && !r.repairedClosed;
+    if (activeFilter === "all") return true;
     return r.status === activeFilter;
   });
 
   const filterLabel: Record<ReportFilter, string> = {
+    multiuser: "Multi-User Reports 👥",
+    repair: "Repair Requests 🔧",
     all: "All Reports",
     pending: "Pending Reports",
     verified: "Verified Reports",
     rejected: "Rejected Reports",
-    multiuser: "Multi-User Reports 👥",
-    repair: "Repair Requests 🔧",
   };
+
+  // ✅ Chip order: multiuser → repair → all → pending → verified → rejected
+  const filterOrder: ReportFilter[] = ["multiuser", "repair", "all", "pending", "verified", "rejected"];
 
   return (
     <View style={styles.safe}>
@@ -154,10 +158,9 @@ export default function AdminDashboardScreen() {
 
         {activeTab === "Dashboard" ? (
           <View style={styles.section}>
-            {/* 🔧 Repair requests card — shown first if there are any */}
             {repairPending > 0 && (
               <DashboardCard
-                icon={<Wrench color="#92400E" size={13} />}
+                icon={<CheckCircle color="#92400E" size={13} />}
                 label="Repair Requests 🔧"
                 value={repairPending}
                 color="#FEF3C7"
@@ -175,7 +178,7 @@ export default function AdminDashboardScreen() {
             <Text style={styles.sectionTitle}>{filterLabel[activeFilter]}</Text>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-              {(["multiuser", "all", "pending", "verified", "rejected", "repair"] as ReportFilter[]).map((f) => (
+              {filterOrder.map((f) => (
                 <TouchableOpacity
                   key={f}
                   style={[styles.filterChip, activeFilter === f && styles.filterChipActive]}
@@ -194,7 +197,12 @@ export default function AdminDashboardScreen() {
               <Text style={styles.emptyText}>No {filterLabel[activeFilter].toLowerCase()} found.</Text>
             ) : (
               filteredReports.map((report) => (
-                <ReportCard key={report.id} report={report} refresh={fetchReports} />
+                <ReportCard
+                  key={report.id}
+                  report={report}
+                  refresh={fetchReports}
+                  isRepairTab={activeFilter === "repair"}
+                />
               ))
             )}
           </View>
@@ -226,11 +234,21 @@ function DashboardCard({ icon, label, value, color, onPress }: any) {
   );
 }
 
-function ReportCard({ report, refresh }: { report: Report; refresh: () => void }) {
+function ReportCard({ report, refresh, isRepairTab }: {
+  report: Report;
+  refresh: () => void;
+  isRepairTab: boolean;
+}) {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerImage, setViewerImage] = useState("");
 
   const openImage = (url: string) => { setViewerImage(url); setViewerVisible(true); };
+
+  const totalReporters = report.corroboratedBy.length || 1;
+  const fixedVoteCount = report.fixedVotes.filter((uid) =>
+    report.corroboratedBy.includes(uid)
+  ).length;
+  const allConfirmed = fixedVoteCount >= totalReporters;
 
   const verifyReport = async () => {
     Alert.alert("Verify Report", `Award 50 credits to ${report.corroboratorNames.length} reporter(s)?`, [
@@ -283,11 +301,14 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
     ]);
   };
 
-  // ✅ Admin closes the repair — pothole gets repairedClosed=true → disappears from map
   const closeRepairReport = async () => {
+    const confirmMsg = allConfirmed
+      ? `All ${totalReporters} reporter${totalReporters > 1 ? "s have" : " has"} confirmed the pothole at "${report.address}" is fixed.\n\nClose this report? It will be removed from the active map.`
+      : `Only ${fixedVoteCount}/${totalReporters} reporter${totalReporters > 1 ? "s have" : " has"} confirmed this is fixed so far.\n\nYou can still close it manually. Close this report?`;
+
     Alert.alert(
-      "Close Repair Report 🔧",
-      `The reporter confirmed this pothole at "${report.address}" is fixed.\n\nClose this report? It will be removed from the active map.`,
+      "Close Report ✅",
+      confirmMsg,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -299,7 +320,6 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
                 repairedClosedAt: new Date().toISOString(),
                 repairVerificationPending: false,
               });
-              // Also close any corroboration sub-reports
               const corrobSnap = await getDocs(query(collection(db, "reports"), where("originalReportId", "==", report.id)));
               for (const c of corrobSnap.docs) {
                 await updateDoc(doc(db, "reports", c.id), { repairedClosed: true });
@@ -317,13 +337,14 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
   const isPending = report.status === "pending";
   const isRejected = report.status === "rejected";
   const allNames = report.corroboratorNames.length > 0 ? report.corroboratorNames : [report.userName];
+  const showRepairAction = report.repairVerificationPending && !report.repairedClosed;
 
   return (
     <View style={[
       styles.reportCard,
       isHighPriority && isPending && styles.reportCardHighPriority,
       isRejected && styles.reportCardRejected,
-      report.repairVerificationPending && !report.repairedClosed && styles.reportCardRepair,
+      isRepairTab && showRepairAction && styles.reportCardRepair,
     ]}>
       <ImageViewerModal visible={viewerVisible} imageUrl={viewerImage} onClose={() => setViewerVisible(false)} />
 
@@ -355,14 +376,43 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
           </View>
         )}
 
-        {/* 🔧 Repair request banner */}
-        {report.repairVerificationPending && !report.repairedClosed && (
-          <View style={styles.repairBadge}>
-            <Text style={styles.repairBadgeText}>🔧 Reporter says this is fixed!</Text>
-            {report.repairVerifiedAt && (
-              <Text style={styles.repairTime}>
-                Reported at: {new Date(report.repairVerifiedAt).toLocaleString()}
-              </Text>
+        {/* ✅ Repair info — ONLY shown when viewing the Repair tab */}
+        {isRepairTab && showRepairAction && (
+          <View style={[styles.repairBadge, allConfirmed && styles.repairBadgeReady]}>
+            <Text style={[styles.repairBadgeText, allConfirmed && styles.repairBadgeTextReady]}>
+              {allConfirmed
+                ? `✅ All ${totalReporters} reporter${totalReporters > 1 ? "s" : ""} confirmed it's fixed!`
+                : `🔧 ${fixedVoteCount}/${totalReporters} reporter${totalReporters > 1 ? "s" : ""} confirmed it's fixed`}
+            </Text>
+
+            {/* Progress bar — only meaningful for multi-user */}
+            {totalReporters > 1 && (
+              <View style={styles.progressBarContainer}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: `${(fixedVoteCount / totalReporters) * 100}%` as any,
+                      backgroundColor: allConfirmed ? "#16A34A" : "#D97706",
+                    },
+                  ]}
+                />
+              </View>
+            )}
+
+            {/* Per-reporter confirmation list — only for multi-user */}
+            {totalReporters > 1 && (
+              <View style={{ marginTop: 6 }}>
+                {report.corroboratedBy.map((uid, i) => {
+                  const hasConfirmed = report.fixedVotes.includes(uid);
+                  const name = report.corroboratorNames[i] || "Unknown";
+                  return (
+                    <Text key={uid} style={[styles.voterRow, hasConfirmed ? styles.voterConfirmed : styles.voterPending]}>
+                      {hasConfirmed ? "✅" : "🕐"} {name}
+                    </Text>
+                  );
+                })}
+              </View>
             )}
           </View>
         )}
@@ -393,7 +443,7 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
         </Text>
       </View>
 
-      {/* Action buttons column */}
+      {/* Action buttons */}
       <View style={styles.actionButtons}>
         {isPending && (
           <>
@@ -405,13 +455,21 @@ function ReportCard({ report, refresh }: { report: Report; refresh: () => void }
             </TouchableOpacity>
           </>
         )}
-        {/* 🔧 Close Repair button — shown when reporter verified it's fixed */}
-        {report.repairVerificationPending && !report.repairedClosed && (
+
+        {/* ✅ Close button — ONLY in repair tab, tick icon, grey until all confirmed */}
+        {isRepairTab && showRepairAction && (
           <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: "#D97706", marginTop: isPending ? 8 : 0 }]}
+            style={[
+              styles.actionBtn,
+              {
+                backgroundColor: allConfirmed ? "#16A34A" : "#94A3B8",
+                marginTop: isPending ? 8 : 0,
+              },
+            ]}
             onPress={closeRepairReport}
+            activeOpacity={0.8}
           >
-            <Wrench color="white" size={20} />
+            <CheckCircle color="white" size={20} />
           </TouchableOpacity>
         )}
       </View>
@@ -471,9 +529,22 @@ const styles = StyleSheet.create({
   statusRejected: { color: "#DC2626" },
   corrobBadge: { marginTop: 6, backgroundColor: "#FEE2E2", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, alignSelf: "flex-start" },
   corrobText: { fontSize: 11, fontWeight: "700", color: "#DC2626" },
-  repairBadge: { marginTop: 6, backgroundColor: "#FEF3C7", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, borderWidth: 1, borderColor: "#FCD34D" },
+  repairBadge: {
+    marginTop: 6, backgroundColor: "#FEF3C7", borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 8,
+    borderWidth: 1, borderColor: "#FCD34D",
+  },
+  repairBadgeReady: { backgroundColor: "#F0FDF4", borderColor: "#86EFAC" },
   repairBadgeText: { fontSize: 11, fontWeight: "700", color: "#92400E" },
-  repairTime: { fontSize: 10, color: "#92400E", marginTop: 2 },
+  repairBadgeTextReady: { color: "#15803D" },
+  progressBarContainer: {
+    height: 6, backgroundColor: "#E5E7EB", borderRadius: 999,
+    marginTop: 6, overflow: "hidden",
+  },
+  progressBarFill: { height: "100%", borderRadius: 999 },
+  voterRow: { fontSize: 11, fontWeight: "600", marginTop: 3 },
+  voterConfirmed: { color: "#16A34A" },
+  voterPending: { color: "#92400E" },
   closedBadge: { marginTop: 6, backgroundColor: "#DCFCE7", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   closedBadgeText: { fontSize: 11, fontWeight: "700", color: "#15803D" },
   corrobThumb: { width: 40, height: 40, borderRadius: 6, marginRight: 6, borderWidth: 1, borderColor: "#E5E7EB" },
