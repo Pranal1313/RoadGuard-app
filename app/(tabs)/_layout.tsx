@@ -61,6 +61,14 @@ export default function TabsLayout({ route }: any) {
           }}
         />
       )}
+
+
+      <Tabs.Screen
+  name="EditProfileScreen"
+  options={{
+    href: null, // ✅ hides it from the tab bar completely
+  }}
+/>
     </Tabs>
   );
 }
