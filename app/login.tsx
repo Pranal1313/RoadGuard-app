@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import {
   View,
@@ -27,10 +28,10 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 
-/* ---------- Input Component ---------- */
+// ── Reusable input field with a left icon and optional right icon ─────────────
 type InputProps = TextInputProps & {
-  icon: React.ReactNode;
-  rightIcon?: React.ReactNode;
+  icon: React.ReactNode;       // left decorative icon (Mail, Lock, etc.)
+  rightIcon?: React.ReactNode; // optional right element (show/hide password toggle)
 };
 
 function Input({ icon, rightIcon, ...props }: InputProps) {
@@ -47,7 +48,8 @@ function Input({ icon, rightIcon, ...props }: InputProps) {
   );
 }
 
-// ✅ Maps Firebase error codes to human-friendly messages
+// ── Convert raw Firebase error codes to user-friendly messages ────────────────
+// Firebase codes are technical (e.g. "auth/wrong-password"); this keeps UX clean
 function getFriendlyError(code: string): string {
   switch (code) {
     case 'auth/wrong-password':
@@ -74,19 +76,26 @@ function getFriendlyError(code: string): string {
 export default function AuthScreen() {
   const router = useRouter();
 
+  // Whether the user selected "User" or "Admin" role tab
   const [role, setRole] = useState<'user' | 'admin'>('user');
+
+  // Whether the form is in login mode (true) or sign-up mode (false)
   const [isLogin, setIsLogin] = useState(true);
+
+  // Password visibility toggles
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  // Form field values
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  /* ---------- SUBMIT HANDLER ---------- */
+  // ── Form submission handler ──────────────────────────────────────────────────
   const handleSubmit = async () => {
+    // Basic presence validation (name + phone required only when user is signing up)
     if (!email || !password || (!isLogin && role === 'user' && (!fullName || !phone))) {
       Alert.alert('Error', 'Please fill all required fields.');
       return;
@@ -97,6 +106,7 @@ export default function AuthScreen() {
       return;
     }
 
+    // Password match check (sign-up only)
     if (!isLogin && role === 'user' && password !== confirmPassword) {
       Alert.alert('Error', 'Passwords do not match!');
       return;
@@ -104,20 +114,23 @@ export default function AuthScreen() {
 
     try {
       if (isLogin) {
+        // ── Login flow ──────────────────────────────────────────────────────
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
+        // Fetch Firestore user doc to check the stored role
         const docRef = doc(db, 'users', user.uid);
         const docSnap = await getDoc(docRef);
 
         if (!docSnap.exists()) {
           Alert.alert('Error', 'User data not found!');
-          await auth.signOut();
+          await auth.signOut(); // revoke session if no Firestore doc exists
           return;
         }
 
         const roleFromDB = docSnap.data().role;
 
+        // Block non-admin accounts from logging in via the Admin tab
         if (role === 'admin' && roleFromDB !== 'admin') {
           await auth.signOut();
           Alert.alert('Access Denied', 'This account is not an admin.', [{ text: 'OK' }]);
@@ -126,35 +139,43 @@ export default function AuthScreen() {
           return;
         }
 
+        // Route to the correct tab stack based on stored role
         if (roleFromDB === 'admin') {
           router.replace('/(admin-tabs)/HomeScreen');
         } else {
           router.replace('/(tabs)/HomeScreen');
         }
+
       } else {
+        // ── Sign-up flow ────────────────────────────────────────────────────
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
+        // Store extra user data in Firestore (name, phone, role)
         await setDoc(doc(db, 'users', user.uid), {
           fullName,
           email,
           phone,
-          role,
+          role, // "user" or "admin" (admin self-registration is currently allowed by the form)
         });
 
         Alert.alert('Success', 'Account created successfully!');
+
+        // Navigate to the correct home screen
         router.replace(role === 'admin' ? '/(admin-tabs)/HomeScreen' : '/(tabs)/HomeScreen');
       }
     } catch (error: any) {
-      // ✅ Show friendly message instead of raw Firebase error
+      // Show a human-readable error message instead of the raw Firebase code
       Alert.alert('Error', getFriendlyError(error.code));
     }
   };
 
   return (
+    // Full-screen blue gradient background
     <LinearGradient colors={['#3368db', '#091c56']} style={ui.container}>
       <ScrollView contentContainerStyle={ui.scroll}>
-        {/* Logo */}
+
+        {/* ── App logo + title ── */}
         <View style={ui.logoWrapper}>
           <View style={ui.logoBox}>
             <Shield size={36} color="#2563EB" />
@@ -163,9 +184,10 @@ export default function AuthScreen() {
           <Text style={ui.subtitle}>AI Pothole Detection & Reporting</Text>
         </View>
 
-        {/* Card */}
+        {/* ── Auth card ── */}
         <View style={ui.card}>
-          {/* Role Toggle */}
+
+          {/* Role toggle: User / Admin */}
           <View style={ui.roleSwitch}>
             <Pressable
               style={[ui.roleButton, role === 'user' && ui.roleActive]}
@@ -184,6 +206,7 @@ export default function AuthScreen() {
             </Pressable>
           </View>
 
+          {/* Full name — only shown when signing up as a user */}
           {role === 'user' && !isLogin && (
             <Input
               icon={<User size={20} color="#94A3B8" />}
@@ -193,6 +216,7 @@ export default function AuthScreen() {
             />
           )}
 
+          {/* Email — always shown */}
           <Input
             icon={<Mail size={20} color="#94A3B8" />}
             placeholder="Email Address"
@@ -201,6 +225,7 @@ export default function AuthScreen() {
             onChangeText={setEmail}
           />
 
+          {/* Phone — only shown when signing up as a user */}
           {role === 'user' && !isLogin && (
             <Input
               icon={<Phone size={20} color="#94A3B8" />}
@@ -211,6 +236,7 @@ export default function AuthScreen() {
             />
           )}
 
+          {/* Password with show/hide toggle */}
           <Input
             icon={<Lock size={20} color="#94A3B8" />}
             placeholder="Password"
@@ -224,6 +250,7 @@ export default function AuthScreen() {
             }
           />
 
+          {/* Confirm password — only shown on user sign-up */}
           {role === 'user' && !isLogin && (
             <Input
               icon={<Lock size={20} color="#94A3B8" />}
@@ -239,6 +266,7 @@ export default function AuthScreen() {
             />
           )}
 
+          {/* Main submit button — label changes based on role + mode */}
           <Pressable style={ui.button} onPress={handleSubmit}>
             <Text style={ui.buttonText}>
               {role === 'admin'
@@ -249,6 +277,7 @@ export default function AuthScreen() {
             </Text>
           </Pressable>
 
+          {/* Toggle between Login and Sign-Up (user role only) */}
           {role === 'user' && (
             <Pressable style={ui.switch} onPress={() => setIsLogin(!isLogin)}>
               <Text style={ui.switchText}>
@@ -257,6 +286,7 @@ export default function AuthScreen() {
             </Pressable>
           )}
 
+          {/* Admin disclaimer box */}
           {role === 'admin' && (
             <View style={ui.warningBox}>
               <Text style={ui.warningText}>Admin Access: Authorized personnel only</Text>
@@ -280,7 +310,7 @@ const ui = StyleSheet.create({
   card: { backgroundColor: 'white', borderRadius: 24, padding: 20 },
   roleSwitch: { flexDirection: 'row', backgroundColor: '#EFF6FF', borderRadius: 14, marginBottom: 18, overflow: 'hidden' },
   roleButton: { flex: 1, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', padding: 12 },
-  roleActive: { backgroundColor: '#d7deec' },
+  roleActive: { backgroundColor: '#d7deec' }, // highlight selected role
   roleText: { fontWeight: '700', color: '#2563EB' },
   roleTextActive: { color: '#2563EB' },
   inputBox: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, marginBottom: 14 },

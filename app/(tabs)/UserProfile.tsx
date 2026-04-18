@@ -1,3 +1,9 @@
+
+// Shows the logged-in user's profile info, credit balance,
+// full report history (with credit status per report), and a logout button.
+// Data is re-fetched every time the screen gains focus.
+
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -22,6 +28,7 @@ import { signOut } from 'firebase/auth';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../../firebaseConfig';
 
+// Shape of a single pothole report from Firestore
 type Report = {
   id: string;
   imageUrl: string;
@@ -29,26 +36,35 @@ type Report = {
   severity?: string;
   status: string;
   location?: string;
-  creditEligible?: boolean;
-  creditsAwarded?: boolean;
+  creditEligible?: boolean;   // true if this report is eligible for credits
+  creditsAwarded?: boolean;   // true if credits have already been given
 };
 
 export default function UserProfile() {
   const router = useRouter();
+
+  // User identity fields loaded from Firestore
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [credits, setCredits] = useState(0);
+
+  // All reports submitted by this user
   const [reports, setReports] = useState<Report[]>([]);
 
+  // ── Load profile data and reports from Firestore ───────────────────────────
   const loadUserData = async () => {
     const user = auth.currentUser;
+
+    // If not logged in, redirect to login screen
     if (!user) {
       router.replace('/login');
       return;
     }
 
+    // Set email directly from the Firebase Auth object (always available)
     setEmail(user.email || '');
 
+    // ── Fetch extra user data from Firestore (name, credits, role) ──────────
     try {
       const docRef = doc(db, 'users', user.uid);
       const docSnap = await getDoc(docRef);
@@ -61,12 +77,15 @@ export default function UserProfile() {
       Alert.alert('Error', 'Failed to load profile data');
     }
 
+    // ── Fetch all reports submitted by this user ─────────────────────────────
     try {
       const reportsQuery = query(
         collection(db, 'reports'),
-        where('userId', '==', user.uid)
+        where('userId', '==', user.uid) // filter to only this user's reports
       );
       const reportsSnap = await getDocs(reportsQuery);
+
+      // Map each Firestore document to our Report type
       const loadedReports: Report[] = reportsSnap.docs.map((docSnap) => {
         const d = docSnap.data() as any;
         return {
@@ -80,6 +99,7 @@ export default function UserProfile() {
           creditsAwarded: d.creditsAwarded ?? false,
         };
       });
+
       setReports(loadedReports);
     } catch (err) {
       Alert.alert('Error', 'Failed to load your reports');
@@ -87,36 +107,43 @@ export default function UserProfile() {
     }
   };
 
+  // Re-run every time this screen comes into focus (e.g. after navigating back)
   useFocusEffect(
     React.useCallback(() => {
       loadUserData();
     }, [])
   );
 
+  // ── Sign out and navigate to login ─────────────────────────────────────────
   const handleLogout = async () => {
     await signOut(auth);
     router.replace('/login');
   };
 
+  // Build 1–2 character initials from fullName for the avatar circle
+  // e.g. "John Doe" → "JD", "Alice" → "A"
   const initials = fullName
     ? fullName.split(' ').map((word) => word[0]).join('').toUpperCase()
-    : 'U';
+    : 'U'; // fallback
 
   return (
     <View style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
+
+        {/* ── Dark blue header: back button, title ── */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <TouchableOpacity onPress={() => router.back()}>
               <ChevronLeft color="white" size={24} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Profile</Text>
+            {/* Spacer keeps title centred */}
             <View style={{ width: 24 }} />
           </View>
 
-          {/* Profile Card */}
+          {/* ── White profile card inside header ── */}
           <View style={styles.profileCard}>
+            {/* Avatar circle + name/email */}
             <View style={styles.profileRow}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{initials}</Text>
@@ -127,18 +154,23 @@ export default function UserProfile() {
               </View>
             </View>
 
-            {/* Credits */}
+            {/* ── Credits box: balance + redeem button ── */}
             <View style={styles.creditsBox}>
               <View style={styles.creditsHeader}>
                 <Text style={styles.creditsLabel}>Total Credits Earned</Text>
+                {/* Gold award icon */}
                 <View style={styles.awardIcon}>
                   <Award size={18} color="white" />
                 </View>
               </View>
+
+              {/* Large credit number */}
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsValue}>{credits}</Text>
                 <Text style={styles.points}>points</Text>
               </View>
+
+              {/* Redeem button (currently no navigation — can be wired up later) */}
               <TouchableOpacity style={styles.redeemBtn}>
                 <CreditCard size={18} color="white" />
                 <Text style={styles.redeemText}>Redeem Credits</Text>
@@ -147,37 +179,47 @@ export default function UserProfile() {
           </View>
         </View>
 
-        {/* My Reports */}
+        {/* ── My Reports section ──────────────────────────────────────────── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>My Reports</Text>
           </View>
 
           {reports.length === 0 ? (
+            // Empty state
             <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>
               You have not submitted any reports yet.
             </Text>
           ) : (
+            // One card per report
             reports.map((report) => (
               <View key={report.id} style={styles.reportCard}>
+                {/* Thumbnail (only rendered if imageUrl exists) */}
                 {report.imageUrl ? (
                   <Image source={{ uri: report.imageUrl }} style={styles.reportImage} />
                 ) : null}
+
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={styles.address} numberOfLines={2}>{report.location}</Text>
+
+                  {/* Severity shown only if available */}
                   {report.severity ? (
                     <Text style={styles.severityText}>Severity: {report.severity}</Text>
                   ) : null}
+
+                  {/* Status in uppercase */}
                   <Text style={styles.statusText}>
                     Status: {report.status.toUpperCase()}
                   </Text>
+
+                  {/* Credit badge: green = awarded, amber = pending, grey = ineligible */}
                   <Text style={[
                     styles.creditBadge,
                     report.creditsAwarded
-                      ? styles.creditAwarded
+                      ? styles.creditAwarded    // credits already given ✓
                       : report.creditEligible
-                      ? styles.creditPending
-                      : styles.creditNone
+                      ? styles.creditPending    // eligible but not yet awarded ⏳
+                      : styles.creditNone       // not eligible ✗
                   ]}>
                     {report.creditsAwarded
                       ? "✓ +50 Credits Awarded"
@@ -191,7 +233,7 @@ export default function UserProfile() {
           )}
         </View>
 
-        {/* Actions */}
+        {/* ── Actions section: only Logout for now ── */}
         <View style={styles.actionsBox}>
           <ActionItem
             icon={<LogOut size={20} color="#DC2626" />}
@@ -201,6 +243,7 @@ export default function UserProfile() {
           />
         </View>
 
+        {/* App version footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>RoadGuard v1.0.0</Text>
         </View>
@@ -209,6 +252,8 @@ export default function UserProfile() {
   );
 }
 
+// ── Reusable action row item ───────────────────────────────────────────────────
+// Used for the Logout button (and any future actions like "Edit Profile")
 function ActionItem({
   icon,
   label,
@@ -217,7 +262,7 @@ function ActionItem({
 }: {
   icon: React.ReactNode;
   label: string;
-  danger?: boolean;
+  danger?: boolean;    // renders label in red when true
   onPress?: () => void;
 }) {
   return (
@@ -233,9 +278,11 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: '#042262',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 24,
-    paddingBottom: 60,
+    paddingBottom: 50,
     paddingHorizontal: 20,
     borderRadius: 26,
+    marginHorizontal: 3,
+    marginTop: 4,
   },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   headerTitle: { color: 'white', fontSize: 18, fontWeight: '600' },

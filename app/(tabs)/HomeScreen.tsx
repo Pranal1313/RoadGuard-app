@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import {
   View,
@@ -10,7 +11,7 @@ import {
   Image,
 } from 'react-native';
 import {
-  Menu,
+
   Bell,
   Camera,
   Award,
@@ -25,6 +26,7 @@ import { auth, db } from '../../firebaseConfig';
 import StatsCard from '../components/StatsCard';
 import MapPreview from '../components/MapPreview';
 
+// structure of a pothole report document from Firestore
 type Report = {
   id: string;
   imageUrl: string;
@@ -36,15 +38,24 @@ type Report = {
 
 export default function HomeScreen() {
   const router = useRouter();
+
+  // Holds the user's credit balance from Firestore
   const [credits, setCredits] = useState(0);
+
+  // Holds the user's 2 most recent non-closed reports
   const [reports, setReports] = useState<Report[]>([]);
-  const [mapRefreshKey, setMapRefreshKey] = useState(0); // ✅ forces map refetch when incremented
 
+  // Incrementing this key forces MapPreview to re-fetch data
+  const [mapRefreshKey, setMapRefreshKey] = useState(0);
+
+  // Called every time this screen comes into focus (e.g. navigating back)
   const loadData = () => {
+    // Listen for auth state; unsubscribe immediately after first event
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      unsubscribe();
-      if (!user) return;
+      unsubscribe(); // prevent memory leaks — only need one auth check
+      if (!user) return; // not logged in, do nothing
 
+      // ── Fetch user's credit balance ──────────────────────────────
       try {
         const userDocRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userDocRef);
@@ -55,12 +66,15 @@ export default function HomeScreen() {
         console.error('Failed to load credits', err);
       }
 
+      // ── Fetch reports submitted by this user ─────────────────────
       try {
         const q = query(
           collection(db, 'reports'),
-          where('userId', '==', user.uid)
+          where('userId', '==', user.uid) // only this user's reports
         );
         const snapshot = await getDocs(q);
+
+        // Map each Firestore doc to our Report type
         const loaded: Report[] = snapshot.docs.map((docSnap) => {
           const data = docSnap.data() as any;
           return {
@@ -68,11 +82,12 @@ export default function HomeScreen() {
             imageUrl: data.imageUrl || '',
             location: data.location || data.address || 'Unknown Location',
             status: data.status || 'pending',
-            createdAt: data.createdAt?.toMillis?.() ?? 0,
+            createdAt: data.createdAt?.toMillis?.() ?? 0, // Firestore Timestamp → ms
             repairedClosed: data.repairedClosed ?? false,
           };
         });
 
+        // Filter out repaired/closed reports, sort newest first, keep top 2
         const sorted = loaded
           .filter((r) => !r.repairedClosed)
           .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
@@ -80,7 +95,7 @@ export default function HomeScreen() {
 
         setReports(sorted);
 
-        // ✅ Increment to tell MapPreview to refetch right now
+        // Bump the key so MapPreview re-fetches its markers
         setMapRefreshKey((prev) => prev + 1);
       } catch (err) {
         console.error('Failed to fetch reports', err);
@@ -88,6 +103,7 @@ export default function HomeScreen() {
     });
   };
 
+  // Re-run loadData every time this tab/screen gains focus
   useFocusEffect(
     React.useCallback(() => {
       loadData();
@@ -97,24 +113,28 @@ export default function HomeScreen() {
   return (
     <View style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
+
+        {/* ── Top header: app title, bell icon, credits card ── */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <View style={styles.row}>
-              <Menu color="white" size={24} />
+          
               <Text style={styles.title}>RoadGuard</Text>
             </View>
             <Bell color="white" size={22} />
           </View>
 
+          {/* Credits card inside the header */}
           <View style={styles.creditsCard}>
             <View style={styles.rowBetween}>
               <View>
                 <Text style={styles.subText}>Your Credits</Text>
+                {/* Shows numeric credits with smaller "points" label */}
                 <Text style={styles.credits}>
                   {credits} <Text style={styles.points}>points</Text>
                 </Text>
               </View>
+              {/* Award icon in a circular bubble */}
               <View style={styles.iconBubble}>
                 <Award color="white" size={28} />
               </View>
@@ -124,21 +144,21 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Stats */}
+        {/* ── Stats row: total reports & verified count ── */}
         <View style={styles.statsRow}>
           <StatsCard
             icon={<MapPin color="#2563EB" size={20} />}
             label="My Reports"
-            value={reports.length}
+            value={reports.length}  // total non-closed reports
           />
           <StatsCard
             icon={<TrendingUp color="#16A34A" size={20} />}
             label="Verified"
-            value={reports.filter((r) => r.status === 'verified').length}
+            value={reports.filter((r) => r.status === 'verified').length} // verified subset
           />
         </View>
 
-        {/* Report Button */}
+        {/* ── Big action button → navigates to ReportScreen ── */}
         <Pressable
           style={styles.reportButton}
           onPress={() => router.push('/ReportScreen')}
@@ -147,28 +167,32 @@ export default function HomeScreen() {
           <Text style={styles.reportText}>Report a Pothole</Text>
         </Pressable>
 
-        {/* Map */}
+        {/* ── Map section showing nearby pothole pins ── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Nearby Potholes</Text>
             <Text style={styles.link}>View All</Text>
           </View>
+          {/* refreshKey prop tells MapPreview to re-fetch when reports change */}
           <MapPreview refreshKey={mapRefreshKey} />
         </View>
 
-        {/* Recent Reports */}
+        {/* ── Recent reports list (max 2 cards) ── */}
         <View style={[styles.section, { marginBottom: 30 }]}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>My Recent Reports</Text>
           </View>
 
           {reports.length === 0 ? (
+            // Empty state message
             <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>
               You have not submitted any reports yet.
             </Text>
           ) : (
+            // Render a card for each recent report
             reports.map((report) => (
               <View key={report.id} style={styles.reportCard}>
+                {/* Show thumbnail only if imageUrl exists */}
                 {report.imageUrl && (
                   <Image
                     source={{ uri: report.imageUrl }}
@@ -177,6 +201,7 @@ export default function HomeScreen() {
                 )}
                 <View style={{ flex: 1, marginLeft: report.imageUrl ? 12 : 0 }}>
                   <Text style={styles.reportLocation}>{report.location}</Text>
+                  {/* Status shown in uppercase (e.g. PENDING, VERIFIED) */}
                   <Text style={styles.reportStatus}>
                     Status: {report.status.toUpperCase()}
                   </Text>
@@ -195,9 +220,12 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: '#042262',
     paddingHorizontal: 19,
+    // Extra top padding on Android to account for the status bar height
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 23,
     paddingBottom: 28,
     borderRadius: 22,
+    marginHorizontal: 3,
+    marginTop: 6,
   },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },

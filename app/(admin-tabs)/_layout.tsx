@@ -4,6 +4,7 @@ import { auth, db } from '../../firebaseConfig';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { View, ActivityIndicator } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function AdminTabsLayout() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export default function AdminTabsLayout() {
         return;
       }
 
-      setChecking(false); // ✅ admin verified
+      setChecking(false);
     });
 
     return unsub;
@@ -39,9 +40,25 @@ export default function AdminTabsLayout() {
   }
 
   return (
-    <Tabs screenOptions={{ headerShown: true }}>
-      <Tabs.Screen name="HomeScreen" options={{ title: 'Admin Home' }} />
-      <Tabs.Screen name="ManageReports" options={{ title: 'Manage Reports' }} />
+    <Tabs screenOptions={{ headerShown: true, tabBarActiveTintColor: '#0f7725', tabBarInactiveTintColor: '#9CA3AF' }}>
+      <Tabs.Screen
+        name="HomeScreen"
+        options={{
+          title: 'Admin Home',
+          tabBarIcon: ({ color, size, focused }: { color: string; size: number; focused: boolean }) => (
+            <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="ManageReports"
+        options={{
+          title: 'Manage Reports',
+          tabBarIcon: ({ color, size, focused }: { color: string; size: number; focused: boolean }) => (
+            <Ionicons name={focused ? 'clipboard' : 'clipboard-outline'} size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

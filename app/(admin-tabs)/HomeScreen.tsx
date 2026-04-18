@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -12,7 +13,6 @@ import {
   Alert,
 } from 'react-native';
 import {
-  Menu,
   MapPin,
   TrendingUp,
   LogOut,
@@ -25,24 +25,32 @@ import { auth, db } from '../../firebaseConfig';
 import StatsCard from '../components/StatsCard';
 import MapPreview from '../components/MapPreview';
 
+// Shape of each report document read from Firestore
 type Report = {
   id: string;
   imageUrl: string;
   location: string;
   status: string;
   createdAt?: number;
-  isCorroboration?: boolean;
-  repairedClosed?: boolean;
+  isCorroboration?: boolean;  // true = secondary/duplicate doc, not a master report
+  repairedClosed?: boolean;   // true = admin officially closed this pothole
 };
 
 export default function AdminHomeScreen() {
   const router = useRouter();
+
+  // All primary (non-corroboration, non-closed) reports — used for stats
   const [reports, setReports] = useState<Report[]>([]);
+
+  // The 2 most recent primary reports — shown in the "Recent Reports" section
   const [recentReports, setRecentReports] = useState<Report[]>([]);
 
+  // ── Fetch all reports from Firestore ──────────────────────────────────────
   const fetchReports = async () => {
     try {
+      // Get every document in the reports collection (no server-side filter)
       const allSnap = await getDocs(collection(db, 'reports'));
+
       const allLoaded: Report[] = allSnap.docs.map((docSnap) => {
         const data = docSnap.data() as any;
         return {
@@ -50,19 +58,20 @@ export default function AdminHomeScreen() {
           imageUrl: data.imageUrl || '',
           location: data.location || data.address || 'Unknown Location',
           status: data.status || 'pending',
-          createdAt: data.createdAt?.toMillis?.() ?? 0,
+          createdAt: data.createdAt?.toMillis?.() ?? 0, // Firestore Timestamp → ms
           isCorroboration: data.isCorroboration ?? false,
           repairedClosed: data.repairedClosed ?? false,
         };
       });
 
-      // ✅ For stats: only count primary (non-corroboration) reports that are NOT closed
+      // For stats: exclude corroboration sub-docs and officially closed reports
+      // so the counts reflect real unique open potholes
       const primaryReports = allLoaded.filter(
         (r) => r.isCorroboration !== true && !r.repairedClosed
       );
       setReports(primaryReports);
 
-      // ✅ For "Recent Reports": show latest 2 primary non-closed reports
+      // For "Recent Reports": sort newest first, keep top 2
       const recent = [...primaryReports]
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, 2);
@@ -72,12 +81,14 @@ export default function AdminHomeScreen() {
     }
   };
 
+  // Re-fetch every time this screen gains focus (e.g. returning from ManageReports)
   useFocusEffect(
     React.useCallback(() => {
       fetchReports();
     }, [])
   );
 
+  // ── Logout with confirmation dialog ──────────────────────────────────────
   const handleLogout = () => {
     Alert.alert(
       'Logout',
@@ -89,13 +100,14 @@ export default function AdminHomeScreen() {
           style: 'destructive',
           onPress: async () => {
             await signOut(auth);
-            router.replace('/login');
+            router.replace('/login'); // send back to auth screen
           },
         },
       ]
     );
   };
 
+  // Derived stat values used by the two StatsCards
   const totalCount = reports.length;
   const verifiedCount = reports.filter((r) => r.status === 'verified').length;
 
@@ -103,18 +115,20 @@ export default function AdminHomeScreen() {
     <View style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
 
-        {/* Header */}
+        {/* ── Green header: app name + logout button + welcome card ── */}
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <View style={styles.row}>
-              <Menu color="white" size={24} />
               <Text style={styles.title}>RoadGuard Admin</Text>
             </View>
+
+            {/* Logout icon button — triggers confirmation alert */}
             <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
               <LogOut color="white" size={20} />
             </TouchableOpacity>
           </View>
 
+          {/* Welcome card inside the header */}
           <View style={styles.creditsCard}>
             <Text style={styles.manageTitle}>Welcome, Admin 👋</Text>
             <View style={styles.divider} />
@@ -122,7 +136,7 @@ export default function AdminHomeScreen() {
           </View>
         </View>
 
-        {/* Stats */}
+        {/* ── Stats row: total reports & verified count ── */}
         <View style={styles.statsRow}>
           <StatsCard
             icon={<MapPin color="#2563EB" size={20} />}
@@ -136,7 +150,7 @@ export default function AdminHomeScreen() {
           />
         </View>
 
-        {/* Manage Reports Button */}
+        {/* ── Primary action button → navigates to the full ManageReports screen ── */}
         <Pressable
           style={styles.reportButton}
           onPress={() => router.push('/ManageReports')}
@@ -144,27 +158,31 @@ export default function AdminHomeScreen() {
           <Text style={styles.reportText}>Manage Reports</Text>
         </Pressable>
 
-        {/* Map */}
+        {/* ── Map section: shows all active pothole pins ── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Nearby Potholes</Text>
           </View>
+          {/* No refreshKey needed here — map re-fetches via useFocusEffect */}
           <MapPreview />
         </View>
 
-        {/* Recent Reports */}
+        {/* ── Recent Reports section (2 newest primary reports) ── */}
         <View style={[styles.section, { marginBottom: 30 }]}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Reports</Text>
           </View>
 
           {recentReports.length === 0 ? (
+            // Empty state
             <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>
               No reports submitted yet.
             </Text>
           ) : (
+            // One card per recent report
             recentReports.map((report) => (
               <View key={report.id} style={styles.reportCard}>
+                {/* Show thumbnail only if an image URL exists */}
                 {report.imageUrl && (
                   <Image
                     source={{ uri: report.imageUrl }}
@@ -173,6 +191,7 @@ export default function AdminHomeScreen() {
                 )}
                 <View style={{ flex: 1, marginLeft: report.imageUrl ? 12 : 0 }}>
                   <Text style={styles.reportLocation}>{report.location}</Text>
+                  {/* Status displayed in uppercase (PENDING / VERIFIED / REJECTED) */}
                   <Text style={styles.reportStatus}>
                     Status: {report.status.toUpperCase()}
                   </Text>
@@ -192,9 +211,12 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: '#449a70',
     paddingHorizontal: 19,
+    // Push content below the Android status bar
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 23,
     paddingBottom: 28,
     borderRadius: 22,
+    marginHorizontal: 3,
+    marginTop: 6,
   },
   headerRow: {
     flexDirection: 'row',
