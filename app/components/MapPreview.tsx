@@ -1,8 +1,3 @@
-// A compact map widget (220px tall) embedded in HomeScreen.
-// Fetches all active (non-closed, non-corroboration) pothole reports
-// from Firestore and plots colour-coded pins on a Google Map.
-// Re-fetches whenever the `refreshKey` prop changes.
-
 
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from "react-native";

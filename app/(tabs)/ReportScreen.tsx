@@ -1,12 +1,4 @@
 
-// Lets a logged-in user report a pothole by:
-//  1. Taking a photo with the in-app camera
-//  2. Choosing severity (Medium / Severe)
-//  3. Optionally adding a text description
-//  4. Picking their GPS location via LocationPickerModal
-//  5. Submitting — which runs AI validation, uploads the image,
-//     and writes to Firestore (as a new report or a corroboration)
-
 import React, { useRef, useState, useEffect } from "react";
 import {
   addDoc,

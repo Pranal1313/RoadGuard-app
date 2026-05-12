@@ -43,12 +43,14 @@ export default function AdminHomeScreen() {
         };
       });
 
-      const primaryReports = allLoaded.filter(
-        (r) => r.isCorroboration !== true && !r.repairedClosed
-      );
+      // FIX: primaryReports includes ALL non-corroboration reports (including closed)
+      // so totalCount matches ManageReports
+      const primaryReports = allLoaded.filter((r) => r.isCorroboration !== true);
       setReports(primaryReports);
 
-      const recent = [...primaryReports]
+      // Recent feed still shows only active (non-closed) reports
+      const activeReports = primaryReports.filter((r) => !r.repairedClosed);
+      const recent = [...activeReports]
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, 2);
       setRecentReports(recent);
@@ -77,8 +79,8 @@ export default function AdminHomeScreen() {
     );
   };
 
-  const totalCount = reports.length;
-  const verifiedCount = reports.filter((r) => r.status === 'verified').length;
+  const totalCount    = reports.length;                                           // FIX: all reports
+  const verifiedCount = reports.filter((r) => r.status === 'verified').length;   // all verified incl. closed
 
   return (
     <View style={styles.safe}>
@@ -89,8 +91,6 @@ export default function AdminHomeScreen() {
           <View style={styles.headerRow}>
             <Text style={styles.title}>RoadGuard Admin</Text>
           </View>
-
-          {/* Welcome card */}
           <View style={styles.creditsCard}>
             <Text style={styles.manageTitle}>Welcome, Admin 👋</Text>
             <View style={styles.divider} />
@@ -98,18 +98,30 @@ export default function AdminHomeScreen() {
           </View>
         </View>
 
-        {/* Stats */}
+        {/* Stats — tapping either card goes to ManageReports */}
         <View style={styles.statsRow}>
-          <StatsCard
-            icon={<MapPin color="#2563EB" size={20} />}
-            label="Total Reports"
-            value={totalCount}
-          />
-          <StatsCard
-            icon={<TrendingUp color="#16A34A" size={20} />}
-            label="Verified"
-            value={verifiedCount}
-          />
+          <TouchableOpacity
+            style={styles.statsTouchable}
+            onPress={() => router.push('/ManageReports')}   // FIX: tappable
+            activeOpacity={0.8}
+          >
+            <StatsCard
+              icon={<MapPin color="#2563EB" size={20} />}
+              label="Total Reports"
+              value={totalCount}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.statsTouchable}
+            onPress={() => router.push('/ManageReports')}   // FIX: tappable
+            activeOpacity={0.8}
+          >
+            <StatsCard
+              icon={<TrendingUp color="#16A34A" size={20} />}
+              label="Verified"
+              value={verifiedCount}
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Manage Reports button */}
@@ -154,7 +166,7 @@ export default function AdminHomeScreen() {
           )}
         </View>
 
-        {/* ✅ Logout — same style as UserProfile action row */}
+        {/* Logout */}
         <View style={styles.actionsBox}>
           <TouchableOpacity style={styles.actionItem} onPress={handleLogout}>
             <LogOut size={20} color="#DC2626" />
@@ -194,6 +206,7 @@ const styles = StyleSheet.create({
   divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.3)', marginVertical: 12 },
   redeemText: { color: '#1a1a1a', fontSize: 13 },
   statsRow: { flexDirection: 'row', gap: 12, padding: 20 },
+  statsTouchable: { flex: 1 },   // each card takes equal width and is tappable
   reportButton: {
     backgroundColor: '#94dcb9', marginHorizontal: 20, padding: 16,
     borderRadius: 18, alignItems: 'center', justifyContent: 'center',
@@ -209,8 +222,6 @@ const styles = StyleSheet.create({
   reportImage: { width: 60, height: 60, borderRadius: 8 },
   reportLocation: { fontWeight: '600', fontSize: 14 },
   reportStatus: { fontSize: 12, color: '#6B7280', marginTop: 2 },
-
-  // ✅ Same logout style as UserProfile
   actionsBox: {
     backgroundColor: 'white', borderRadius: 18,
     marginHorizontal: 20, marginTop: 24, marginBottom: 8,

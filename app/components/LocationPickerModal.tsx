@@ -15,7 +15,6 @@ import * as Location from "expo-location";
 // Google Maps API key used for reverse geocoding (address lookup from lat/lng)
 const GOOGLE_API_KEY = "AIzaSyAAhR6d2TrpJZZ4NXq2vWBR_60GjykZYac";
 
-// ── Conditionally import react-native-maps (not available on web) ─────────────
 let MapView: any = null;
 let Marker: any = null;
 let PROVIDER_GOOGLE: any = null;
@@ -26,7 +25,7 @@ if (Platform.OS !== "web") {
   PROVIDER_GOOGLE = Maps.PROVIDER_GOOGLE;
 }
 
-// Props passed in by the parent (ReportScreen)
+
 interface Props {
   visible: boolean;
   onClose: () => void;
@@ -137,10 +136,17 @@ export default function LocationPickerModal({ visible, onClose, onConfirm }: Pro
               longitudeDelta: 0.003,
             }}
             // Map is display-only — scroll/zoom disabled to prevent accidental movement
-            scrollEnabled={false}
-            zoomEnabled={false}
+            scrollEnabled={true}
+            zoomEnabled={true}
             rotateEnabled={false}
             pitchEnabled={false}
+
+onPress={(e: any) => {
+  const { latitude, longitude } = e.nativeEvent.coordinate;
+
+  setMarker({ lat: latitude, lng: longitude });
+  reverseGeocode(latitude, longitude);
+}}
           >
             {/* Single marker pinned at the detected GPS location */}
             {Marker && (
